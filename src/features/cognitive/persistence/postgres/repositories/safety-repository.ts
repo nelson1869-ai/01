@@ -34,6 +34,24 @@ export class SafetyRepository {
     return decodeExecutionSafetyRow(rows[0]);
   }
 
+  async findSafetyStateBySessionIdForUpdate(
+    executor: DatabaseExecutor,
+    sessionId: string,
+  ): Promise<StoredExecutionSafety | null> {
+    const rows = await executor
+      .select()
+      .from(executionSafetyState)
+      .where(eq(executionSafetyState.sessionId, sessionId))
+      .for("update")
+      .limit(1);
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return decodeExecutionSafetyRow(rows[0]);
+  }
+
   async createInitialSafetyState(
     executor: DatabaseExecutor,
     sessionId: string,

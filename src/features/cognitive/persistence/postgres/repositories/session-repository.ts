@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull, lte } from "drizzle-orm";
 
 import type { CognitivePhase } from "../../../domain/types";
 import type { PersistedCognitiveSession } from "../../contracts/cognitive-session";
@@ -56,6 +56,48 @@ export class SessionRepository {
     }
 
     return decodeCognitiveSessionRow(rows[0]);
+  }
+
+  async findCooldownSessionsReadyToResume(
+    executor: DatabaseExecutor,
+    now: string,
+    limit = 50,
+  ): Promise<PersistedCognitiveSession[]> {
+    const rows = await executor
+      .select()
+      .from(cognitiveSessions)
+      .where(
+        and(
+          eq(cognitiveSessions.phase, "COOLDOWN"),
+          isNotNull(cognitiveSessions.cooldownUntil),
+          lte(cognitiveSessions.cooldownUntil, now),
+        ),
+      )
+      .orderBy(
+        asc(cognitiveSessions.cooldownUntil),
+        asc(cognitiveSessions.sessionId),
+      )
+      .limit(limit);
+
+    return rows.map((r) => decodeCognitiveSessionRow(r));
+  }
+
+  async findSessionsByPhase(
+    executor: DatabaseExecutor,
+    phase: CognitivePhase,
+    limit = 50,
+  ): Promise<PersistedCognitiveSession[]> {
+    const rows = await executor
+      .select()
+      .from(cognitiveSessions)
+      .where(eq(cognitiveSessions.phase, phase))
+      .orderBy(
+        asc(cognitiveSessions.updatedAt),
+        asc(cognitiveSessions.sessionId),
+      )
+      .limit(limit);
+
+    return rows.map((r) => decodeCognitiveSessionRow(r));
   }
 
   async createSession(

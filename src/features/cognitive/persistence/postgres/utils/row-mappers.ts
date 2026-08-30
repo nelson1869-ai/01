@@ -1,3 +1,4 @@
+import type { Cue } from "../../../domain/cue";
 import {
   type PersistedCognitiveSession,
   persistedCognitiveSessionSchema,
@@ -330,8 +331,7 @@ export function decodeCandidateActionRow(
     estimatedCost: Number(raw.estimatedCost ?? raw.estimated_cost),
     scoreValue: Number(raw.scoreValue ?? raw.score_value),
     recommendation: raw.recommendation,
-    scoreFormulaVersion:
-      raw.scoreFormulaVersion ?? raw.score_formula_version,
+    scoreFormulaVersion: raw.scoreFormulaVersion ?? raw.score_formula_version,
     evidenceIds: raw.evidenceIds ?? evidenceIds,
     createdAt: normalizeDateString(raw.createdAt ?? raw.created_at),
   };
@@ -401,8 +401,7 @@ export function decodePolicyDecisionRow(
     evaluationKey: raw.evaluationKey ?? raw.evaluation_key,
     outcome: raw.outcome,
     reason: raw.reason,
-    policyEngineVersion:
-      raw.policyEngineVersion ?? raw.policy_engine_version,
+    policyEngineVersion: raw.policyEngineVersion ?? raw.policy_engine_version,
     policyIds: raw.policyIds ?? policyIds,
     evaluatedAt: normalizeDateString(raw.evaluatedAt ?? raw.evaluated_at),
   };
@@ -561,8 +560,7 @@ export function decodeFailureAuditRow(
     ),
     reason: raw.reason,
     evidenceIds: raw.evidenceIds ?? evidenceIds,
-    logicalFailureKey:
-      raw.logicalFailureKey ?? raw.logical_failure_key,
+    logicalFailureKey: raw.logicalFailureKey ?? raw.logical_failure_key,
     createdAt: normalizeDateString(raw.createdAt ?? raw.created_at),
   };
 
@@ -677,11 +675,7 @@ export function decodeIdempotencyRecordRow(
     scope: String(raw.scope),
     idempotencyKey: String(raw.idempotencyKey ?? raw.idempotency_key),
     requestHash: String(raw.requestHash ?? raw.request_hash),
-    status: raw.status as
-      | "IN_PROGRESS"
-      | "COMPLETED"
-      | "FAILED"
-      | "UNKNOWN",
+    status: raw.status as "IN_PROGRESS" | "COMPLETED" | "FAILED" | "UNKNOWN",
     resultResourceType: (raw.resultResourceType ??
       raw.result_resource_type ??
       null) as string | null,
@@ -689,14 +683,23 @@ export function decodeIdempotencyRecordRow(
       raw.result_resource_id ??
       null) as string | null,
     errorCode: (raw.errorCode ?? raw.error_code ?? null) as string | null,
-    createdAt: String(
-      normalizeDateString(raw.createdAt ?? raw.created_at),
-    ),
-    updatedAt: String(
-      normalizeDateString(raw.updatedAt ?? raw.updated_at),
-    ),
-    expiresAt: raw.expiresAt || raw.expires_at
-      ? String(normalizeDateString(raw.expiresAt ?? raw.expires_at))
-      : null,
+    createdAt: String(normalizeDateString(raw.createdAt ?? raw.created_at)),
+    updatedAt: String(normalizeDateString(raw.updatedAt ?? raw.updated_at)),
+    expiresAt:
+      raw.expiresAt || raw.expires_at
+        ? String(normalizeDateString(raw.expiresAt ?? raw.expires_at))
+        : null,
+  };
+}
+
+export function mapPersistedCueToDomainCue(
+  persisted: PersistedCueIngress,
+): Cue {
+  return {
+    id: persisted.cueId,
+    type: persisted.type,
+    source: persisted.source,
+    occurredAt: persisted.occurredAt,
+    payload: persisted.payload,
   };
 }
