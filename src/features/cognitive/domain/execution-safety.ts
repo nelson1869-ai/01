@@ -1,21 +1,34 @@
 import type { GroundingResult } from "./grounding";
 import type { PolicyDecision } from "./policy-decision";
 import type { RecoveryFailure } from "./failure-recovery";
+import type { AgentContext } from "./types";
 
 export type ExecutionSafetyStatus = "ALLOWED" | "BLOCKED";
 
-export type ExecutionSafetyState = Readonly<{
-  status: ExecutionSafetyStatus;
+const executionAuthorizationBrand: unique symbol = Symbol(
+  "executionAuthorization",
+);
 
-  // Present when execution was blocked because of a failure.
-  failure: RecoveryFailure | null;
-
-  // Explanation for audit/debugging.
-  reason: string | null;
-
-  // Timestamp when blocking happened.
-  blockedAt: string | null;
+export type AllowedExecutionSafetyState = Readonly<{
+  status: "ALLOWED";
+  candidateId: string;
+  failure: null;
+  reason: null;
+  blockedAt: null;
+  [executionAuthorizationBrand]: string;
 }>;
+
+export type BlockedExecutionSafetyState = Readonly<{
+  status: "BLOCKED";
+  candidateId: null;
+  failure: RecoveryFailure;
+  reason: string;
+  blockedAt: string;
+}>;
+
+export type ExecutionSafetyState =
+  | AllowedExecutionSafetyState
+  | BlockedExecutionSafetyState;
 
 // ============================================================
 // BLOCK AUTONOMOUS EXECUTION
@@ -24,9 +37,10 @@ export function blockAutonomousExecution(
   failure: RecoveryFailure,
   reason: string,
   blockedAt: string,
-): ExecutionSafetyState {
+): BlockedExecutionSafetyState {
   return {
     status: "BLOCKED",
+    candidateId: null,
     failure,
     reason,
     blockedAt,
@@ -37,9 +51,18 @@ export function blockAutonomousExecution(
 // RE-ENABLE AUTONOMOUS EXECUTION
 // ============================================================
 export function allowAutonomousExecution(
+  context: AgentContext,
   grounding: GroundingResult,
   policy: PolicyDecision,
-): ExecutionSafetyState {
+): AllowedExecutionSafetyState {
+  // Authorization may only be minted at the policy gate. Recovery terminal
+  // states and every other phase fail closed.
+  if (context.phase !== "POLICY_SAFETY") {
+    throw new Error(
+      "Autonomous execution can only be authorized during POLICY_SAFETY.",
+    );
+  }
+
   // Grounding must independently verify the candidate.
   if (grounding.status !== "VERIFIED") {
     throw new Error("Autonomous execution requires verified grounding.");
@@ -57,10 +80,31 @@ export function allowAutonomousExecution(
     );
   }
 
-  return {
-    status: "ALLOWED",
+  const authorization = {
+    status: "ALLOWED" as const,
+    candidateId: grounding.candidateId,
     failure: null,
     reason: null,
     blockedAt: null,
   };
+
+  // Keep the private candidate binding out of object spread/serialization,
+  // and freeze the issued capability so it cannot be retargeted in place.
+  Object.defineProperty(authorization, executionAuthorizationBrand, {
+    value: grounding.candidateId,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+
+  return Object.freeze(authorization) as AllowedExecutionSafetyState;
+}
+
+export function isAllowedExecutionSafetyState(
+  safety: ExecutionSafetyState,
+): safety is AllowedExecutionSafetyState {
+  return (
+    safety.status === "ALLOWED" &&
+    safety[executionAuthorizationBrand] === safety.candidateId
+  );
 }
