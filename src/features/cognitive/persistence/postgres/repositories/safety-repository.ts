@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 
 import type { StoredExecutionSafety } from "../../contracts/execution-safety";
 import type { SafetyTransitionCommand } from "../../contracts/transition-commands";
@@ -50,6 +50,30 @@ export class SafetyRepository {
     }
 
     return decodeExecutionSafetyRow(rows[0]);
+  }
+
+  async hasEvaluationArtifactBeenAuthorized(
+    executor: DatabaseExecutor,
+    params: { groundingResultId: string; policyDecisionId: string },
+  ): Promise<boolean> {
+    const rows = await executor
+      .select({ safetyEventId: executionSafetyEvents.safetyEventId })
+      .from(executionSafetyEvents)
+      .where(
+        and(
+          eq(executionSafetyEvents.eventType, "AUTHORIZATION_ISSUED"),
+          or(
+            eq(
+              executionSafetyEvents.groundingResultId,
+              params.groundingResultId,
+            ),
+            eq(executionSafetyEvents.policyDecisionId, params.policyDecisionId),
+          ),
+        ),
+      )
+      .limit(1);
+
+    return rows.length > 0;
   }
 
   async createInitialSafetyState(

@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, lte } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lte } from "drizzle-orm";
 
 import type { CognitivePhase } from "../../../domain/types";
 import type { PersistedCognitiveSession } from "../../contracts/cognitive-session";
@@ -10,6 +10,8 @@ import { decodeCognitiveSessionRow } from "../utils/row-mappers";
 export interface SessionTransitionParams {
   readonly sessionId: string;
   readonly expectedRowVersion: number;
+  readonly expectedPhase?: CognitivePhase;
+  readonly expectedCandidateId?: string | null;
   readonly nextSessionState: {
     readonly phase: CognitivePhase;
     readonly failureCount: number;
@@ -130,6 +132,25 @@ export class SessionRepository {
     executor: DatabaseExecutor,
     params: SessionTransitionParams,
   ): Promise<PersistedCognitiveSession> {
+    const conditions = [
+      eq(cognitiveSessions.sessionId, params.sessionId),
+      eq(cognitiveSessions.rowVersion, params.expectedRowVersion),
+    ];
+
+    if (params.expectedPhase) {
+      conditions.push(eq(cognitiveSessions.phase, params.expectedPhase));
+    }
+
+    if (params.expectedCandidateId !== undefined) {
+      if (params.expectedCandidateId === null) {
+        conditions.push(isNull(cognitiveSessions.currentCandidateId));
+      } else {
+        conditions.push(
+          eq(cognitiveSessions.currentCandidateId, params.expectedCandidateId),
+        );
+      }
+    }
+
     const updatedRows = await executor
       .update(cognitiveSessions)
       .set({
@@ -144,12 +165,7 @@ export class SessionRepository {
         rowVersion: params.expectedRowVersion + 1,
         updatedAt: params.nextSessionState.updatedAt,
       })
-      .where(
-        and(
-          eq(cognitiveSessions.sessionId, params.sessionId),
-          eq(cognitiveSessions.rowVersion, params.expectedRowVersion),
-        ),
-      )
+      .where(and(...conditions))
       .returning();
 
     if (updatedRows.length === 0) {

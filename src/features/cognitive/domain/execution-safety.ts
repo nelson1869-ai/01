@@ -84,14 +84,22 @@ export function blockAutonomousExecution(
   };
 }
 
+export type GroundingAuthorizationDecision =
+  | GroundingResult
+  | Readonly<Pick<GroundingResult, "candidateId" | "status">>;
+
+export type PolicyAuthorizationDecision =
+  | PolicyDecision
+  | Readonly<Pick<PolicyDecision, "candidateId" | "outcome">>;
+
 // ============================================================
 // RE-ENABLE AUTONOMOUS EXECUTION
 // ============================================================
 export function allowAutonomousExecution(
   currentSafety: ExecutionSafetyState,
-  context: AgentContext,
-  grounding: GroundingResult,
-  policy: PolicyDecision,
+  context: Pick<AgentContext, "phase">,
+  grounding: GroundingAuthorizationDecision,
+  policy: PolicyAuthorizationDecision,
 ): AllowedExecutionSafetyState {
   // Authorization may only be minted at the policy gate. Recovery terminal
   // states and every other phase fail closed.
