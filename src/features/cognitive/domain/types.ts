@@ -35,10 +35,3 @@ export type AgentContext = Readonly<{
   workingMemory: Readonly<Record<string, unknown>>;
   createdAt: string;
 }>;
-
-export type VerificationResult = Readonly<{
-  verified: boolean;
-  score: number;
-  failureReason?: string;
-  auditEvidence?: Readonly<Record<string, unknown>>;
-}>;
