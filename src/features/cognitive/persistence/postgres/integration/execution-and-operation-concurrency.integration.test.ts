@@ -42,28 +42,37 @@ describe("live PostgreSQL execution and operation concurrency tests", () => {
 
     await context.db.execute(sql`
       INSERT INTO cues (cue_id, source, external_event_id, cue_type, occurred_at, received_at, payload, payload_hash)
-      VALUES (${params.cueId}, 'test', ${params.cueId}, 'test.event', NOW(), NOW(), '{}', 'hash');
+      VALUES (${params.cueId}, 'test', ${params.cueId}, 'user.action', NOW(), NOW(), '{}', 'hash')
+    `);
 
+    await context.db.execute(sql`
       INSERT INTO cognitive_sessions (session_id, cue_id, phase, failure_count, retry_count, max_retries, row_version, created_at, updated_at)
-      VALUES (${params.sessionId}, ${params.cueId}, 'PLAN', 0, 0, 2, 0, NOW(), NOW());
+      VALUES (${params.sessionId}, ${params.cueId}, 'PLAN', 0, 0, 2, 0, NOW(), NOW())
+    `);
 
+    await context.db.execute(sql`
       INSERT INTO execution_safety_state (session_id, generation, durable_status, reason, updated_at)
-      VALUES (${params.sessionId}, ${safetyGen}, 'UNAUTHORIZED', 'Ready for evaluation', NOW());
+      VALUES (${params.sessionId}, ${safetyGen}, 'UNAUTHORIZED', 'Ready for evaluation', NOW())
+    `);
 
-      INSERT INTO candidate_actions (candidate_id, session_id, action_name, action_kind, parameters, score, justification, created_at)
-      VALUES (${params.candidateId}, ${params.sessionId}, 'action', 'TEST', '{}', 0.9, 'just', NOW());
+    await context.db.execute(sql`
+      INSERT INTO candidate_actions (
+        candidate_id, session_id, cue_id, goal, action, confidence, expected_utility,
+        estimated_risk, estimated_cost, score_value, recommendation, score_formula_version, created_at
+      ) VALUES (
+        ${params.candidateId}, ${params.sessionId}, ${params.cueId}, 'Execute step', 'test_action',
+        0.9, 0.9, 0.1, 0.1, 0.9, 'PROCEED', 'v1', NOW()
+      )
+    `);
 
-      INSERT INTO grounding_results (grounding_result_id, candidate_id, session_id, grounded, grounding_score, evaluation, created_at)
-      VALUES (${params.groundingId}, ${params.candidateId}, ${params.sessionId}, true, 1.0, '{}', NOW());
+    await context.db.execute(sql`
+      INSERT INTO action_plans (plan_id, candidate_id, plan_generation, created_at)
+      VALUES (${params.planId}, ${params.candidateId}, 1, NOW())
+    `);
 
-      INSERT INTO policy_decisions (policy_decision_id, candidate_id, session_id, decision, score, reason, constraints_evaluated, created_at)
-      VALUES (${params.policyId}, ${params.candidateId}, ${params.sessionId}, 'ALLOW', 1.0, 'pass', '[]', NOW());
-
-      INSERT INTO action_plans (plan_id, session_id, candidate_id, grounding_result_id, policy_decision_id, total_steps, created_at)
-      VALUES (${params.planId}, ${params.sessionId}, ${params.candidateId}, ${params.groundingId}, ${params.policyId}, 1, NOW());
-
+    await context.db.execute(sql`
       INSERT INTO executions (execution_id, session_id, plan_id, status, row_version, created_at, updated_at)
-      VALUES (${params.executionId}, ${params.sessionId}, ${params.planId}, 'PENDING', 0, NOW(), NOW());
+      VALUES (${params.executionId}, ${params.sessionId}, ${params.planId}, 'PENDING', 0, NOW(), NOW())
     `);
   }
 
@@ -84,8 +93,8 @@ describe("live PostgreSQL execution and operation concurrency tests", () => {
     // Concurrently, a failure worker advances safety state to generation 8 (BLOCKED)
     await context.db.execute(sql`
       UPDATE execution_safety_state
-      SET generation = 8, durable_status = 'BLOCKED', failure_code = 'EXECUTION_REJECTED', reason = 'Failure worker revoked authorization'
-      WHERE session_id = ${fixture.sessionId};
+      SET generation = 8, durable_status = 'BLOCKED', failure_code = 'EXECUTION_REJECTED', reason = 'Failure worker revoked authorization', blocked_at = NOW(), updated_at = NOW()
+      WHERE session_id = ${fixture.sessionId}
     `);
 
     // Worker attempts to start execution believing safety generation is 7
@@ -208,8 +217,8 @@ describe("live PostgreSQL execution and operation concurrency tests", () => {
 
     // Insert step
     await context.db.execute(sql`
-      INSERT INTO action_plan_steps (step_id, plan_id, step_index, step_name, action_kind, parameters)
-      VALUES ('step-op-1', ${fixture.planId}, 0, 'Send Email', 'EMAIL', '{}');
+      INSERT INTO action_plan_steps (plan_id, step_id, ordinal, description)
+      VALUES (${fixture.planId}, 'step-op-1', 0, 'Send Email')
     `);
 
     const op: PersistedExecutionOperation = {
@@ -265,8 +274,8 @@ describe("live PostgreSQL execution and operation concurrency tests", () => {
     await seedExecutionFixture(fixture);
 
     await context.db.execute(sql`
-      INSERT INTO action_plan_steps (step_id, plan_id, step_index, step_name, action_kind, parameters)
-      VALUES ('step-op-conflict-1', ${fixture.planId}, 0, 'Send Email', 'EMAIL', '{}');
+      INSERT INTO action_plan_steps (plan_id, step_id, ordinal, description)
+      VALUES (${fixture.planId}, 'step-op-conflict-1', 0, 'Send Email')
     `);
 
     const opA: PersistedExecutionOperation = {
@@ -331,8 +340,8 @@ describe("live PostgreSQL execution and operation concurrency tests", () => {
     await seedExecutionFixture(fixture);
 
     await context.db.execute(sql`
-      INSERT INTO action_plan_steps (step_id, plan_id, step_index, step_name, action_kind, parameters)
-      VALUES ('step-unk-1', ${fixture.planId}, 0, 'Charge Card', 'PAYMENT', '{}');
+      INSERT INTO action_plan_steps (plan_id, step_id, ordinal, description)
+      VALUES (${fixture.planId}, 'step-unk-1', 0, 'Charge Card')
     `);
 
     const unknownOp: PersistedExecutionOperation = {

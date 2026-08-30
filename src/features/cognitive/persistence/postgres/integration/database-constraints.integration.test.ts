@@ -7,6 +7,28 @@ import {
   setupIntegrationTestDatabase,
 } from "../testing/integration-harness";
 
+function extractDbErrorCode(error: unknown): string | undefined {
+  if (typeof error === "object" && error !== null) {
+    if (
+      "code" in error &&
+      typeof (error as { code: unknown }).code === "string"
+    ) {
+      return (error as { code: string }).code;
+    }
+    if (
+      "cause" in error &&
+      typeof (error as { cause: unknown }).cause === "object" &&
+      (error as { cause: unknown }).cause !== null
+    ) {
+      const cause = (error as { cause: Record<string, unknown> }).cause;
+      if (typeof cause.code === "string") {
+        return cause.code;
+      }
+    }
+  }
+  return undefined;
+}
+
 describe("live PostgreSQL database constraints and migration smoke test", () => {
   let context: PostgresDatabaseContext;
 
@@ -62,10 +84,12 @@ describe("live PostgreSQL database constraints and migration smoke test", () => 
 
     await context.db.execute(sql`
       INSERT INTO cues (cue_id, source, external_event_id, cue_type, occurred_at, received_at, payload, payload_hash)
-      VALUES (${cueId}, 'test', 'evt-allowed', 'test.event', NOW(), NOW(), '{}', 'hash-1');
+      VALUES (${cueId}, 'test', 'evt-allowed', 'user.action', NOW(), NOW(), '{}', 'hash-1')
+    `);
 
+    await context.db.execute(sql`
       INSERT INTO cognitive_sessions (session_id, cue_id, phase, failure_count, retry_count, max_retries, row_version, created_at, updated_at)
-      VALUES (${sessionId}, ${cueId}, 'CUE', 0, 0, 2, 0, NOW(), NOW());
+      VALUES (${sessionId}, ${cueId}, 'CUE', 0, 0, 2, 0, NOW(), NOW())
     `);
 
     try {
@@ -74,14 +98,13 @@ describe("live PostgreSQL database constraints and migration smoke test", () => 
           session_id, generation, durable_status, reason, updated_at
         ) VALUES (
           ${sessionId}, 0, 'ALLOWED', 'Testing forbidden stored state', NOW()
-        );
+        )
       `);
       expect.unreachable(
         "Database should have rejected durable_status = 'ALLOWED'",
       );
     } catch (error: unknown) {
-      const dbErr = error as { code?: string };
-      expect(dbErr.code).toBe("23514"); // check_violation
+      expect(extractDbErrorCode(error)).toBe("23514"); // check_violation
     }
 
     // Verify database and connection remain operational afterward
@@ -93,55 +116,55 @@ describe("live PostgreSQL database constraints and migration smoke test", () => 
     const cueId = "cue-test-check";
     await context.db.execute(sql`
       INSERT INTO cues (cue_id, source, external_event_id, cue_type, occurred_at, received_at, payload, payload_hash)
-      VALUES (${cueId}, 'test', 'evt-check-constraints', 'test.event', NOW(), NOW(), '{}', 'hash-2');
+      VALUES (${cueId}, 'test', 'evt-check-constraints', 'user.action', NOW(), NOW(), '{}', 'hash-2')
     `);
 
     // 1. failure_count < 0
     try {
       await context.db.execute(sql`
         INSERT INTO cognitive_sessions (session_id, cue_id, phase, failure_count, retry_count, max_retries, row_version, created_at, updated_at)
-        VALUES ('s-neg-fail', ${cueId}, 'CUE', -1, 0, 2, 0, NOW(), NOW());
+        VALUES ('s-neg-fail', ${cueId}, 'CUE', -1, 0, 2, 0, NOW(), NOW())
       `);
       expect.unreachable("Should have rejected failure_count < 0");
     } catch (error: unknown) {
-      expect((error as { code?: string }).code).toBe("23514");
+      expect(extractDbErrorCode(error)).toBe("23514");
     }
 
     // 2. retry_count > max_retries
     try {
       await context.db.execute(sql`
         INSERT INTO cognitive_sessions (session_id, cue_id, phase, failure_count, retry_count, max_retries, row_version, created_at, updated_at)
-        VALUES ('s-retry-exceeded', ${cueId}, 'CUE', 0, 3, 2, 0, NOW(), NOW());
+        VALUES ('s-retry-exceeded', ${cueId}, 'CUE', 0, 3, 2, 0, NOW(), NOW())
       `);
       expect.unreachable("Should have rejected retry_count > max_retries");
     } catch (error: unknown) {
-      expect((error as { code?: string }).code).toBe("23514");
+      expect(extractDbErrorCode(error)).toBe("23514");
     }
 
     // 3. COOLDOWN phase with null cooldown_until
     try {
       await context.db.execute(sql`
         INSERT INTO cognitive_sessions (session_id, cue_id, phase, failure_count, retry_count, max_retries, cooldown_until, row_version, created_at, updated_at)
-        VALUES ('s-null-cooldown', ${cueId}, 'COOLDOWN', 0, 0, 2, NULL, 0, NOW(), NOW());
+        VALUES ('s-null-cooldown', ${cueId}, 'COOLDOWN', 0, 0, 2, NULL, 0, NOW(), NOW())
       `);
       expect.unreachable(
         "Should have rejected COOLDOWN with null cooldown_until",
       );
     } catch (error: unknown) {
-      expect((error as { code?: string }).code).toBe("23514");
+      expect(extractDbErrorCode(error)).toBe("23514");
     }
 
     // 4. Non-COOLDOWN phase with non-null cooldown_until
     try {
       await context.db.execute(sql`
         INSERT INTO cognitive_sessions (session_id, cue_id, phase, failure_count, retry_count, max_retries, cooldown_until, row_version, created_at, updated_at)
-        VALUES ('s-invalid-cooldown', ${cueId}, 'PERCEIVE', 0, 0, 2, NOW() + interval '10 minutes', 0, NOW(), NOW());
+        VALUES ('s-invalid-cooldown', ${cueId}, 'PERCEIVE', 0, 0, 2, NOW() + interval '10 minutes', 0, NOW(), NOW())
       `);
       expect.unreachable(
         "Should have rejected PERCEIVE with non-null cooldown_until",
       );
     } catch (error: unknown) {
-      expect((error as { code?: string }).code).toBe("23514");
+      expect(extractDbErrorCode(error)).toBe("23514");
     }
   });
 
@@ -152,67 +175,59 @@ describe("live PostgreSQL database constraints and migration smoke test", () => 
           execution_id, session_id, plan_id, status, row_version, created_at, updated_at
         ) VALUES (
           'exec-bad-fk', 'non-existent-session', 'non-existent-plan', 'PENDING', 0, NOW(), NOW()
-        );
+        )
       `);
       expect.unreachable("Should have rejected FK violation");
     } catch (error: unknown) {
-      expect((error as { code?: string }).code).toBe("23503"); // foreign_key_violation
+      expect(extractDbErrorCode(error)).toBe("23503"); // foreign_key_violation
     }
   });
 
   it("Test 16: Append-Only Duplicate Barrier - rejects duplicate ledger event insertion", async () => {
     const cueId = "cue-test-ledger";
     const sessionId = "session-test-ledger";
-    const candidateId = "cand-test-ledger";
-    const groundingId = "ground-test-ledger";
-    const policyId = "pol-test-ledger";
-    const planId = "plan-test-ledger";
-    const execId = "exec-test-ledger";
     const auditId = "audit-test-ledger-1";
 
     await context.db.execute(sql`
       INSERT INTO cues (cue_id, source, external_event_id, cue_type, occurred_at, received_at, payload, payload_hash)
-      VALUES (${cueId}, 'test', 'evt-ledger', 'test.event', NOW(), NOW(), '{}', 'hash-3');
+      VALUES (${cueId}, 'test', 'evt-ledger', 'user.action', NOW(), NOW(), '{}', 'hash-3')
+    `);
 
+    await context.db.execute(sql`
       INSERT INTO cognitive_sessions (session_id, cue_id, phase, failure_count, retry_count, max_retries, row_version, created_at, updated_at)
-      VALUES (${sessionId}, ${cueId}, 'CUE', 0, 0, 2, 0, NOW(), NOW());
+      VALUES (${sessionId}, ${cueId}, 'CUE', 0, 0, 2, 0, NOW(), NOW())
+    `);
 
-      INSERT INTO candidate_actions (candidate_id, session_id, action_name, action_kind, parameters, score, justification, created_at)
-      VALUES (${candidateId}, ${sessionId}, 'test_action', 'TEST', '{}', 0.9, 'justification', NOW());
-
-      INSERT INTO grounding_results (grounding_result_id, candidate_id, session_id, grounded, grounding_score, evaluation, created_at)
-      VALUES (${groundingId}, ${candidateId}, ${sessionId}, true, 1.0, '{}', NOW());
-
-      INSERT INTO policy_decisions (policy_decision_id, candidate_id, session_id, decision, score, reason, constraints_evaluated, created_at)
-      VALUES (${policyId}, ${candidateId}, ${sessionId}, 'ALLOW', 1.0, 'Policy passed', '[]', NOW());
-
-      INSERT INTO action_plans (plan_id, session_id, candidate_id, grounding_result_id, policy_decision_id, total_steps, created_at)
-      VALUES (${planId}, ${sessionId}, ${candidateId}, ${groundingId}, ${policyId}, 1, NOW());
-
-      INSERT INTO executions (execution_id, session_id, plan_id, status, row_version, created_at, updated_at)
-      VALUES (${execId}, ${sessionId}, ${planId}, 'PENDING', 0, NOW(), NOW());
-
+    await context.db.execute(sql`
       INSERT INTO failure_audit_events (
-        failure_audit_event_id, execution_id, session_id, failure_type, error_message, created_at
+        audit_event_id, logical_failure_key, session_id, failure_code, original_phase,
+        failure_count, retry_count, from_safety_generation, revoked_safety_generation,
+        recovery_action, reason, created_at
       ) VALUES (
-        ${auditId}, ${execId}, ${sessionId}, 'EXECUTION_REJECTED', 'Initial failure', NOW()
-      );
+        ${auditId}, 'fail:key:1', ${sessionId}, 'HALLUCINATION_DETECTED', 'GROUND_VERIFY',
+        1, 0, 0, 1,
+        'START_COOLDOWN', 'Grounding check failed', NOW()
+      )
     `);
 
     // Attempt duplicate primary key insertion on failure_audit_events
     try {
       await context.db.execute(sql`
         INSERT INTO failure_audit_events (
-          failure_audit_event_id, execution_id, session_id, failure_type, error_message, created_at
+          audit_event_id, logical_failure_key, session_id, failure_code, original_phase,
+          failure_count, retry_count, from_safety_generation, revoked_safety_generation,
+          recovery_action, reason, created_at
         ) VALUES (
-          ${auditId}, ${execId}, ${sessionId}, 'EXECUTION_REJECTED', 'Duplicate attempt', NOW()
-        );
+          ${auditId}, 'fail:key:2', ${sessionId}, 'HALLUCINATION_DETECTED', 'GROUND_VERIFY',
+          1, 0, 0, 1,
+          'START_COOLDOWN', 'Duplicate attempt', NOW()
+        )
       `);
       expect.unreachable(
         "Should have rejected duplicate failure_audit_event_id",
       );
     } catch (error: unknown) {
-      expect((error as { code?: string }).code).toBe("23505"); // unique_violation
+      expect(extractDbErrorCode(error)).toBe("23505"); // unique_violation
     }
   });
 });

@@ -116,7 +116,9 @@ describe("live PostgreSQL cue ingestion and safety concurrency tests", () => {
       sql`SELECT cue_id FROM cues WHERE source = 'email' AND external_event_id = 'evt-conflict-1'`,
     );
     expect(dbCues.rows.length).toBe(1);
-    expect((dbCues.rows[0] as { cue_id: string }).cue_id).toBe("cue-conflict-a");
+    expect((dbCues.rows[0] as { cue_id: string }).cue_id).toBe(
+      "cue-conflict-a",
+    );
   });
 
   it("Test 6: Safety Generation CAS Race - exactly one worker advances generation", async () => {
@@ -196,7 +198,9 @@ describe("live PostgreSQL cue ingestion and safety concurrency tests", () => {
     const stateRows = await context.db.execute(
       sql`SELECT generation, durable_status FROM execution_safety_state WHERE session_id = 'session-cas-safety'`,
     );
-    expect((stateRows.rows[0] as { generation: number }).generation).toBe(1);
+    expect(
+      Number((stateRows.rows[0] as { generation: number | string }).generation),
+    ).toBe(1);
 
     const eventRows = await context.db.execute(
       sql`SELECT COUNT(*)::int as count FROM execution_safety_events WHERE session_id = 'session-cas-safety' AND to_generation = 1`,
@@ -278,13 +282,13 @@ describe("live PostgreSQL cue ingestion and safety concurrency tests", () => {
         // Step 1: Insert cue
         await tx.execute(sql`
           INSERT INTO cues (cue_id, source, external_event_id, cue_type, occurred_at, received_at, payload, payload_hash)
-          VALUES (${cue.cueId}, ${cue.source}, ${cue.externalEventId}, ${cue.type}, NOW(), NOW(), '{}', 'hash-rb');
+          VALUES (${cue.cueId}, ${cue.source}, ${cue.externalEventId}, ${cue.type}, NOW(), NOW(), '{}', 'hash-rb')
         `);
 
         // Step 2: Simulate failure (e.g. invalid check constraint)
         await tx.execute(sql`
           INSERT INTO cognitive_sessions (session_id, cue_id, phase, failure_count, retry_count, max_retries, row_version, created_at, updated_at)
-          VALUES ('s-rb', ${cue.cueId}, 'CUE', -10, 0, 2, 0, NOW(), NOW());
+          VALUES ('s-rb', ${cue.cueId}, 'CUE', -10, 0, 2, 0, NOW(), NOW())
         `);
       });
       expect.unreachable("Transaction should have failed and rolled back");

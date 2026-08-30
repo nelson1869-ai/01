@@ -24,6 +24,12 @@ function normalizeDateString(value: unknown): unknown {
   if (value instanceof Date) {
     return value.toISOString();
   }
+  if (typeof value === "string") {
+    const d = new Date(value);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toISOString();
+    }
+  }
   return value;
 }
 
@@ -222,7 +228,7 @@ export function decodeExecutionOperationRow(
   const parsed = persistedExecutionOperationSchema.safeParse(candidate);
   if (!parsed.success) {
     throw PersistenceError.invalidPersistedState(
-      "Failed to decode persisted execution operation record.",
+      `Failed to decode persisted execution operation record: ${JSON.stringify(parsed.error.issues)}`,
       { issues: parsed.error.issues, row },
     );
   }

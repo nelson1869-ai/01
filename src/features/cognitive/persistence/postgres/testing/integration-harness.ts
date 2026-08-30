@@ -7,15 +7,7 @@ import {
 } from "../client";
 import type { DatabaseClient } from "../transactions/transaction-executor";
 
-export function getTestDatabaseUrl(): string {
-  const url = process.env.TEST_DATABASE_URL;
-
-  if (typeof url !== "string" || url.trim().length === 0) {
-    throw new Error(
-      "TEST_DATABASE_URL is required for live PostgreSQL integration tests.",
-    );
-  }
-
+function validateDatabaseUrl(url: string): string {
   let dbName = "";
   try {
     const parsed = new URL(url);
@@ -31,6 +23,39 @@ export function getTestDatabaseUrl(): string {
   }
 
   return url;
+}
+
+export function getTestDatabaseUrl(explicitUrl?: string): string {
+  if (explicitUrl !== undefined) {
+    if (explicitUrl.trim().length === 0) {
+      throw new Error(
+        "TEST_DATABASE_URL is required for live PostgreSQL integration tests.",
+      );
+    }
+    return validateDatabaseUrl(explicitUrl);
+  }
+
+  if (
+    (!process.env.TEST_DATABASE_URL ||
+      process.env.TEST_DATABASE_URL.trim().length === 0) &&
+    typeof process.loadEnvFile === "function"
+  ) {
+    try {
+      process.loadEnvFile(".env.local");
+    } catch {
+      // ignore if .env.local is missing
+    }
+  }
+
+  const url = process.env.TEST_DATABASE_URL;
+
+  if (typeof url !== "string" || url.trim().length === 0) {
+    throw new Error(
+      "TEST_DATABASE_URL is required for live PostgreSQL integration tests.",
+    );
+  }
+
+  return validateDatabaseUrl(url);
 }
 
 export async function setupIntegrationTestDatabase(): Promise<PostgresDatabaseContext> {
