@@ -3,7 +3,7 @@ import type { PolicyDecision } from "./policy-decision";
 import type { RecoveryFailure } from "./failure-recovery";
 import type { AgentContext } from "./types";
 
-export type ExecutionSafetyStatus = "ALLOWED" | "BLOCKED";
+export type ExecutionSafetyStatus = "UNAUTHORIZED" | "ALLOWED" | "BLOCKED";
 
 const executionAuthorizationBrand: unique symbol = Symbol(
   "executionAuthorization",
@@ -11,6 +11,7 @@ const executionAuthorizationBrand: unique symbol = Symbol(
 
 export type AllowedExecutionSafetyState = Readonly<{
   status: "ALLOWED";
+  generation: number;
   candidateId: string;
   failure: null;
   reason: null;
@@ -20,26 +21,62 @@ export type AllowedExecutionSafetyState = Readonly<{
 
 export type BlockedExecutionSafetyState = Readonly<{
   status: "BLOCKED";
+  generation: number;
   candidateId: null;
   failure: RecoveryFailure;
   reason: string;
   blockedAt: string;
 }>;
 
+export type UnauthorizedExecutionSafetyState = Readonly<{
+  status: "UNAUTHORIZED";
+  generation: number;
+  candidateId: null;
+  failure: null;
+  reason: string;
+  blockedAt: null;
+}>;
+
 export type ExecutionSafetyState =
+  | UnauthorizedExecutionSafetyState
   | AllowedExecutionSafetyState
   | BlockedExecutionSafetyState;
+
+function nextGeneration(safety: ExecutionSafetyState): number {
+  if (
+    !Number.isSafeInteger(safety.generation) ||
+    safety.generation < 0 ||
+    safety.generation >= Number.MAX_SAFE_INTEGER
+  ) {
+    throw new Error("Execution safety generation is invalid.");
+  }
+
+  return safety.generation + 1;
+}
+
+export function createInitialExecutionSafetyState(): UnauthorizedExecutionSafetyState {
+  return {
+    status: "UNAUTHORIZED",
+    generation: 0,
+    candidateId: null,
+    failure: null,
+    reason: "Autonomous execution has not been authorized.",
+    blockedAt: null,
+  };
+}
 
 // ============================================================
 // BLOCK AUTONOMOUS EXECUTION
 // ============================================================
 export function blockAutonomousExecution(
+  currentSafety: ExecutionSafetyState,
   failure: RecoveryFailure,
   reason: string,
   blockedAt: string,
 ): BlockedExecutionSafetyState {
   return {
     status: "BLOCKED",
+    generation: nextGeneration(currentSafety),
     candidateId: null,
     failure,
     reason,
@@ -51,6 +88,7 @@ export function blockAutonomousExecution(
 // RE-ENABLE AUTONOMOUS EXECUTION
 // ============================================================
 export function allowAutonomousExecution(
+  currentSafety: ExecutionSafetyState,
   context: AgentContext,
   grounding: GroundingResult,
   policy: PolicyDecision,
@@ -82,6 +120,7 @@ export function allowAutonomousExecution(
 
   const authorization = {
     status: "ALLOWED" as const,
+    generation: nextGeneration(currentSafety),
     candidateId: grounding.candidateId,
     failure: null,
     reason: null,
@@ -91,7 +130,7 @@ export function allowAutonomousExecution(
   // Keep the private candidate binding out of object spread/serialization,
   // and freeze the issued capability so it cannot be retargeted in place.
   Object.defineProperty(authorization, executionAuthorizationBrand, {
-    value: grounding.candidateId,
+    value: `${authorization.generation}:${grounding.candidateId}`,
     enumerable: false,
     writable: false,
     configurable: false,
@@ -105,6 +144,7 @@ export function isAllowedExecutionSafetyState(
 ): safety is AllowedExecutionSafetyState {
   return (
     safety.status === "ALLOWED" &&
-    safety[executionAuthorizationBrand] === safety.candidateId
+    safety[executionAuthorizationBrand] ===
+      `${safety.generation}:${safety.candidateId}`
   );
 }

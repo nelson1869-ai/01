@@ -6,7 +6,8 @@ import type { ExecutionRecord } from "./execution";
 export function startAutonomousExecution(
   execution: ExecutionRecord,
   plan: ActionPlan,
-  safety: ExecutionSafetyState,
+  authorization: ExecutionSafetyState,
+  currentSafety: ExecutionSafetyState,
   startedAt: string,
 ): ExecutionRecord {
   // ============================================================
@@ -14,12 +15,12 @@ export function startAutonomousExecution(
   // ============================================================
   // Never start an autonomous action unless the safety gate
   // explicitly says execution is allowed.
-  assertAutonomousExecutionAllowed(safety);
+  assertAutonomousExecutionAllowed(authorization, currentSafety);
 
   // ============================================================
   // 2. AUTHORIZATION BINDING
   // ============================================================
-  if (safety.candidateId !== plan.candidateId) {
+  if (authorization.candidateId !== plan.candidateId) {
     throw new Error(
       "Execution authorization and plan must reference the same candidate.",
     );

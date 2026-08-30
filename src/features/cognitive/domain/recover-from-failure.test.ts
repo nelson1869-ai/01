@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FAILURE_COOLDOWN_MS } from "./cooldown";
+import { createInitialExecutionSafetyState } from "./execution-safety";
 import { recoverFromFailure } from "./recover-from-failure";
 import type { AgentContext } from "./types";
 
@@ -33,6 +34,7 @@ describe("recoverFromFailure", () => {
 
     const result = recoverFromFailure(
       context,
+      createInitialExecutionSafetyState(),
       "HALLUCINATION_DETECTED",
       1_000,
       {
@@ -125,6 +127,7 @@ describe("recoverFromFailure", () => {
 
     const result = recoverFromFailure(
       context,
+      createInitialExecutionSafetyState(),
       "HALLUCINATION_DETECTED",
       nowMs,
       {
@@ -209,6 +212,7 @@ describe("recoverFromFailure", () => {
 
     const result = recoverFromFailure(
       context,
+      createInitialExecutionSafetyState(),
       "HALLUCINATION_DETECTED",
       20_000,
       {
@@ -290,11 +294,17 @@ describe("recoverFromFailure", () => {
       createdAt: "2026-08-30T00:00:00.000Z",
     };
 
-    const result = recoverFromFailure(context, "POLICY_VIOLATION", 30_000, {
-      id: "audit-4",
-      evidenceIds: ["evidence-policy-1"],
-      createdAt: "2026-08-30T01:03:00.000Z",
-    });
+    const result = recoverFromFailure(
+      context,
+      createInitialExecutionSafetyState(),
+      "POLICY_VIOLATION",
+      30_000,
+      {
+        id: "audit-4",
+        evidenceIds: ["evidence-policy-1"],
+        createdAt: "2026-08-30T01:03:00.000Z",
+      },
+    );
 
     // ============================================================
     // RECOVERY DECISION

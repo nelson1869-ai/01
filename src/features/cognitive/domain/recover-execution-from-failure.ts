@@ -6,6 +6,7 @@ import {
 } from "./recover-from-failure";
 
 import type { CreateFailureAuditInput } from "./create-failure-audit";
+import type { ExecutionSafetyState } from "./execution-safety";
 import type { ExecutionRecord } from "./execution";
 import type { RecoveryFailure } from "./failure-recovery";
 import type { AgentContext } from "./types";
@@ -18,6 +19,7 @@ export type ExecutionFailureRecoveryResult = Readonly<{
 export function recoverExecutionFromFailure(
   context: AgentContext,
   execution: ExecutionRecord,
+  currentExecutionSafety: ExecutionSafetyState,
   failure: RecoveryFailure,
   nowMs: number,
   auditInput: CreateFailureAuditInput,
@@ -29,7 +31,13 @@ export function recoverExecutionFromFailure(
   // - creates the failure audit
   // - blocks autonomous execution permission
   // - chooses retry / cooldown / human review
-  const recovery = recoverFromFailure(context, failure, nowMs, auditInput);
+  const recovery = recoverFromFailure(
+    context,
+    currentExecutionSafety,
+    failure,
+    nowMs,
+    auditInput,
+  );
 
   // ============================================================
   // 2. STOP THE ACTIVE EXECUTION RECORD

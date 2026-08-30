@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { assertAutonomousExecutionAllowed } from "./execution-guard";
-import { allowAutonomousExecution } from "./execution-safety";
+import {
+  allowAutonomousExecution,
+  createInitialExecutionSafetyState,
+} from "./execution-safety";
 import type { ExecutionSafetyState } from "./execution-safety";
 import type { AgentContext } from "./types";
 
@@ -19,6 +22,7 @@ const policyContext: AgentContext = {
 describe("assertAutonomousExecutionAllowed", () => {
   it("allows execution when the safety state is ALLOWED", () => {
     const safety = allowAutonomousExecution(
+      createInitialExecutionSafetyState(),
       policyContext,
       {
         candidateId: "candidate-1",
@@ -35,19 +39,22 @@ describe("assertAutonomousExecutionAllowed", () => {
       },
     );
 
-    expect(() => assertAutonomousExecutionAllowed(safety)).not.toThrow();
+    expect(() =>
+      assertAutonomousExecutionAllowed(safety, safety),
+    ).not.toThrow();
   });
 
   it("blocks execution when the safety state is BLOCKED", () => {
     const safety: ExecutionSafetyState = {
       status: "BLOCKED",
+      generation: 1,
       candidateId: null,
       failure: "HALLUCINATION_DETECTED",
       reason: "Grounding failed.",
       blockedAt: "2026-08-30T15:45:00.000Z",
     };
 
-    expect(() => assertAutonomousExecutionAllowed(safety)).toThrow(
+    expect(() => assertAutonomousExecutionAllowed(safety, safety)).toThrow(
       "Autonomous execution is blocked by the execution safety gate.",
     );
   });
@@ -55,19 +62,23 @@ describe("assertAutonomousExecutionAllowed", () => {
   it("rejects an unbranded object that claims to be ALLOWED", () => {
     const forgedSafety = {
       status: "ALLOWED",
+      generation: 1,
       candidateId: "candidate-1",
       failure: null,
       reason: null,
       blockedAt: null,
     } as unknown as ExecutionSafetyState;
 
-    expect(() => assertAutonomousExecutionAllowed(forgedSafety)).toThrow(
+    expect(() =>
+      assertAutonomousExecutionAllowed(forgedSafety, forgedSafety),
+    ).toThrow(
       "Autonomous execution is blocked by the execution safety gate.",
     );
   });
 
   it("rejects a cloned authorization retargeted to another candidate", () => {
     const safety = allowAutonomousExecution(
+      createInitialExecutionSafetyState(),
       policyContext,
       {
         candidateId: "candidate-1",
@@ -89,7 +100,9 @@ describe("assertAutonomousExecutionAllowed", () => {
       candidateId: "candidate-2",
     };
 
-    expect(() => assertAutonomousExecutionAllowed(retargetedSafety)).toThrow(
+    expect(() =>
+      assertAutonomousExecutionAllowed(retargetedSafety, safety),
+    ).toThrow(
       "Autonomous execution is blocked by the execution safety gate.",
     );
   });

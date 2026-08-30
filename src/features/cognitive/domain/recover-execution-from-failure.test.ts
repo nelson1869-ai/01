@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { createInitialExecutionSafetyState } from "./execution-safety";
 import { recoverExecutionFromFailure } from "./recover-execution-from-failure";
 import type { ExecutionRecord } from "./execution";
 import type { AgentContext } from "./types";
@@ -42,6 +43,7 @@ describe("recoverExecutionFromFailure", () => {
     const result = recoverExecutionFromFailure(
       context,
       execution,
+      createInitialExecutionSafetyState(),
       "HALLUCINATION_DETECTED",
       1_000,
       {

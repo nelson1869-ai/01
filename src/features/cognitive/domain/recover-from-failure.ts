@@ -28,6 +28,7 @@ export type FailureRecoveryResult = Readonly<{
 
 export function recoverFromFailure(
   context: AgentContext,
+  currentExecutionSafety: ExecutionSafetyState,
   failure: RecoveryFailure,
   nowMs: number,
   auditInput: CreateFailureAuditInput,
@@ -49,6 +50,7 @@ export function recoverFromFailure(
   // Failure means no more tool/action execution is allowed
   // until the system passes through a safe recovery path.
   const executionSafety = blockAutonomousExecution(
+    currentExecutionSafety,
     failure,
     decision.reason,
     auditInput.createdAt,

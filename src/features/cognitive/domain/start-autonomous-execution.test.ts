@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { startAutonomousExecution } from "./start-autonomous-execution";
-import { allowAutonomousExecution } from "./execution-safety";
+import {
+  allowAutonomousExecution,
+  createInitialExecutionSafetyState,
+} from "./execution-safety";
 import type { ActionPlan } from "./action-plan";
 import type { ExecutionSafetyState } from "./execution-safety";
 import type { ExecutionRecord } from "./execution";
@@ -27,6 +30,7 @@ const policyContext: AgentContext = {
 
 function authorizeCandidate(candidateId: string): ExecutionSafetyState {
   return allowAutonomousExecution(
+    createInitialExecutionSafetyState(),
     policyContext,
     {
       candidateId,
@@ -65,6 +69,7 @@ describe("startAutonomousExecution", () => {
       execution,
       plan,
       safety,
+      safety,
       "2026-08-30T16:00:00.000Z",
     );
 
@@ -95,6 +100,7 @@ describe("startAutonomousExecution", () => {
 
     const safety: ExecutionSafetyState = {
       status: "BLOCKED",
+      generation: 1,
       candidateId: null,
       failure: "HALLUCINATION_DETECTED",
       reason: "Grounding failed.",
@@ -105,6 +111,7 @@ describe("startAutonomousExecution", () => {
       startAutonomousExecution(
         execution,
         plan,
+        safety,
         safety,
         "2026-08-30T16:00:00.000Z",
       ),
@@ -132,6 +139,7 @@ describe("startAutonomousExecution", () => {
         execution,
         plan,
         safety,
+        safety,
         "2026-08-30T16:00:00.000Z",
       ),
     ).toThrow("Only a pending execution can be started.");
@@ -155,6 +163,7 @@ describe("startAutonomousExecution", () => {
         execution,
         plan,
         safety,
+        safety,
         "2026-08-30T16:00:00.000Z",
       ),
     ).toThrow("Only a pending execution can be started.");
@@ -177,6 +186,7 @@ describe("startAutonomousExecution", () => {
       startAutonomousExecution(
         execution,
         plan,
+        safety,
         safety,
         "2026-08-30T16:00:00.000Z",
       ),
@@ -202,6 +212,7 @@ describe("startAutonomousExecution", () => {
       startAutonomousExecution(
         execution,
         plan,
+        safety,
         safety,
         "2026-08-30T16:00:00.000Z",
       ),

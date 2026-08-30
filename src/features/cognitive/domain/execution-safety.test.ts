@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   allowAutonomousExecution,
   blockAutonomousExecution,
+  createInitialExecutionSafetyState,
 } from "./execution-safety";
 
 import type { GroundingResult } from "./grounding";
@@ -29,6 +30,7 @@ describe("execution safety", () => {
   // ============================================================
   it("blocks autonomous execution after a recoverable failure", () => {
     const result = blockAutonomousExecution(
+      createInitialExecutionSafetyState(),
       "HALLUCINATION_DETECTED",
       "Grounding could not verify the proposed action.",
       "2026-08-30T15:30:00.000Z",
@@ -36,6 +38,7 @@ describe("execution safety", () => {
 
     expect(result).toMatchObject({
       status: "BLOCKED",
+      generation: 1,
       candidateId: null,
       failure: "HALLUCINATION_DETECTED",
       reason: "Grounding could not verify the proposed action.",
@@ -63,6 +66,7 @@ describe("execution safety", () => {
     };
 
     const result = allowAutonomousExecution(
+      createInitialExecutionSafetyState(),
       createContext("POLICY_SAFETY"),
       grounding,
       policy,
@@ -70,6 +74,7 @@ describe("execution safety", () => {
 
     expect(result).toMatchObject({
       status: "ALLOWED",
+      generation: 1,
       candidateId: "candidate-1",
       failure: null,
       reason: null,
@@ -98,6 +103,7 @@ describe("execution safety", () => {
 
     expect(() =>
       allowAutonomousExecution(
+        createInitialExecutionSafetyState(),
         createContext("POLICY_SAFETY"),
         grounding,
         policy,
@@ -128,6 +134,7 @@ describe("execution safety", () => {
 
     expect(() =>
       allowAutonomousExecution(
+        createInitialExecutionSafetyState(),
         createContext("POLICY_SAFETY"),
         grounding,
         policy,
@@ -158,6 +165,7 @@ describe("execution safety", () => {
 
     expect(() =>
       allowAutonomousExecution(
+        createInitialExecutionSafetyState(),
         createContext("POLICY_SAFETY"),
         grounding,
         policy,
@@ -186,7 +194,12 @@ describe("execution safety", () => {
       };
 
       expect(() =>
-        allowAutonomousExecution(createContext(phase), grounding, policy),
+        allowAutonomousExecution(
+          createInitialExecutionSafetyState(),
+          createContext(phase),
+          grounding,
+          policy,
+        ),
       ).toThrow(
         "Autonomous execution can only be authorized during POLICY_SAFETY.",
       );
@@ -196,6 +209,7 @@ describe("execution safety", () => {
   it("makes contradictory execution safety states impossible by type", () => {
     expectTypeOf<{
       status: "ALLOWED";
+      generation: 1;
       candidateId: "candidate-1";
       failure: null;
       reason: null;
@@ -204,6 +218,7 @@ describe("execution safety", () => {
 
     expectTypeOf<{
       status: "ALLOWED";
+      generation: 1;
       candidateId: "candidate-1";
       failure: "HALLUCINATION_DETECTED";
       reason: "failed";
@@ -212,6 +227,7 @@ describe("execution safety", () => {
 
     expectTypeOf<{
       status: "BLOCKED";
+      generation: 1;
       candidateId: "candidate-1";
       failure: null;
       reason: null;
