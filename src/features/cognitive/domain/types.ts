@@ -1,8 +1,44 @@
-export interface CandidateAction {
-  readonly id: string;
-  readonly toolName: string;
-  readonly parameters: Readonly<Record<string, unknown>>;
-  readonly confidenceScore: number;
-  readonly isGrounded: boolean;
-  readonly rationale: string;
-}
+export type CognitivePhase =
+  | "CUE"
+  | "PERCEIVE"
+  | "BUILD_CONTEXT"
+  | "RETRIEVE_MEMORY"
+  | "GENERATE_CANDIDATES"
+  | "SCORE"
+  | "GROUND_VERIFY"
+  | "POLICY_SAFETY"
+  | "PLAN"
+  | "DURABLE_EXECUTION"
+  | "ACT"
+  | "OBSERVE"
+  | "VERIFY_RESULT"
+  | "REWARD"
+  | "LEARN"
+  | "SAVE_MEMORY"
+  | "CLEAR_WORKING_MEMORY"
+  | "IDLE";
+
+export type FailureStatus =
+  | "HALLUCINATION_DETECTED"
+  | "POLICY_VIOLATION"
+  | "EXECUTION_TIMEOUT"
+  | "UNVERIFIED_RESULT"
+  | "COOLDOWN_ACTIVE"
+  | "ESCALATED_TO_HUMAN";
+
+export type AgentContext = Readonly<{
+  sessionId: string;
+  phase: CognitivePhase;
+  retryCount: number;
+  maxRetries: number;
+  cooldownUntilMs: number | null;
+  workingMemory: Readonly<Record<string, unknown>>;
+  createdAt: string;
+}>;
+
+export type VerificationResult = Readonly<{
+  verified: boolean;
+  score: number;
+  failureReason?: string;
+  auditEvidence?: Readonly<Record<string, unknown>>;
+}>;
