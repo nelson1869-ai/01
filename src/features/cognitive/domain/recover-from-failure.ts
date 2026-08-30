@@ -10,6 +10,12 @@ import {
 } from "./failure-recovery";
 
 import { applyFailureRecovery } from "./apply-failure-recovery";
+
+import {
+  blockAutonomousExecution,
+  type ExecutionSafetyState,
+} from "./execution-safety";
+
 import type { FailureAuditEvent } from "./failure-audit";
 import type { AgentContext } from "./types";
 
@@ -17,6 +23,7 @@ export type FailureRecoveryResult = Readonly<{
   context: AgentContext;
   decision: FailureRecoveryDecision;
   audit: FailureAuditEvent;
+  executionSafety: ExecutionSafetyState;
 }>;
 
 export function recoverFromFailure(
@@ -28,31 +35,37 @@ export function recoverFromFailure(
   // ============================================================
   // 1. DECIDE RECOVERY
   // ============================================================
-  // Determine whether the system should:
-  // - retry with fresh context
-  // - enter cooldown
-  // - escalate to human
   const decision = decideFailureRecovery(context, failure);
 
   // ============================================================
   // 2. PRESERVE AUDIT EVIDENCE
   // ============================================================
-  // Important:
-  // Create the audit record BEFORE recovery clears temporary
-  // working-memory assumptions.
+  // Capture failure information before temporary memory is cleared.
   const audit = createFailureAuditEvent(context, decision, auditInput);
 
   // ============================================================
-  // 3. APPLY RECOVERY
+  // 3. BLOCK AUTONOMOUS EXECUTION
+  // ============================================================
+  // Failure means no more tool/action execution is allowed
+  // until the system passes through a safe recovery path.
+  const executionSafety = blockAutonomousExecution(
+    failure,
+    decision.reason,
+    auditInput.createdAt,
+  );
+
+  // ============================================================
+  // 4. APPLY RECOVERY
   // ============================================================
   const recoveredContext = applyFailureRecovery(context, decision, nowMs);
 
   // ============================================================
-  // 4. RETURN RESULT
+  // 5. RETURN RESULT
   // ============================================================
   return {
     context: recoveredContext,
     decision,
     audit,
+    executionSafety,
   };
 }

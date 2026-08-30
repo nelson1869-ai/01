@@ -42,8 +42,14 @@ describe("recoverFromFailure", () => {
       },
     );
 
+    // ============================================================
+    // RECOVERY DECISION
+    // ============================================================
     expect(result.decision.action).toBe("RETRY_WITH_FRESH_CONTEXT");
 
+    // ============================================================
+    // RECOVERED CONTEXT
+    // ============================================================
     expect(result.context.phase).toBe("BUILD_CONTEXT");
 
     expect(result.context.failureCount).toBe(1);
@@ -53,21 +59,36 @@ describe("recoverFromFailure", () => {
     expect(result.context.cooldownUntilMs).toBeNull();
 
     // Fresh mind:
-    // preserve the root cue only.
+    // preserve only the original cue.
     expect(result.context.workingMemory).toEqual({
       cue: {
         id: "cue-1",
       },
     });
 
-    // Audit survives even though temporary memory was cleared.
+    // ============================================================
+    // AUDIT EVENT
+    // ============================================================
     expect(result.audit.id).toBe("audit-1");
 
     expect(result.audit.failure).toBe("HALLUCINATION_DETECTED");
 
+    // Audit keeps the ORIGINAL phase where failure happened.
     expect(result.audit.phase).toBe("VERIFY_RESULT");
 
     expect(result.audit.evidenceIds).toEqual(["evidence-1"]);
+
+    // ============================================================
+    // EXECUTION SAFETY
+    // ============================================================
+    // Failure immediately blocks autonomous execution.
+    expect(result.executionSafety.status).toBe("BLOCKED");
+
+    expect(result.executionSafety.failure).toBe("HALLUCINATION_DETECTED");
+
+    expect(result.executionSafety.reason).toBe(result.decision.reason);
+
+    expect(result.executionSafety.blockedAt).toBe("2026-08-30T01:00:00.000Z");
   });
 
   // ============================================================
@@ -95,6 +116,7 @@ describe("recoverFromFailure", () => {
           id: "cue-1",
         },
 
+        // Temporary data from the failed retry.
         assumption: "another temporary guess",
       },
 
@@ -112,13 +134,19 @@ describe("recoverFromFailure", () => {
       },
     );
 
+    // ============================================================
+    // RECOVERY DECISION
+    // ============================================================
     expect(result.decision.action).toBe("START_COOLDOWN");
 
+    // ============================================================
+    // RECOVERED CONTEXT
+    // ============================================================
     expect(result.context.phase).toBe("COOLDOWN");
 
     expect(result.context.failureCount).toBe(2);
 
-    // Retry is not consumed yet.
+    // Retry is NOT consumed yet.
     expect(result.context.retryCount).toBe(1);
 
     // OUTPUT: 250000
@@ -131,12 +159,21 @@ describe("recoverFromFailure", () => {
       },
     });
 
+    // ============================================================
+    // AUDIT EVENT
+    // ============================================================
     expect(result.audit.id).toBe("audit-2");
 
     expect(result.audit.action).toBe("START_COOLDOWN");
 
-    // Original failure phase is preserved.
     expect(result.audit.phase).toBe("VERIFY_RESULT");
+
+    // ============================================================
+    // EXECUTION SAFETY
+    // ============================================================
+    expect(result.executionSafety.status).toBe("BLOCKED");
+
+    expect(result.executionSafety.failure).toBe("HALLUCINATION_DETECTED");
   });
 
   // ============================================================
@@ -153,7 +190,7 @@ describe("recoverFromFailure", () => {
       // Two retries already started.
       retryCount: 2,
 
-      // Keep retry budget available.
+      // Keep budget available.
       // This proves failure #3 itself causes escalation.
       maxRetries: 5,
 
@@ -181,30 +218,45 @@ describe("recoverFromFailure", () => {
       },
     );
 
+    // ============================================================
+    // RECOVERY DECISION
+    // ============================================================
     expect(result.decision.action).toBe("ESCALATE_TO_HUMAN");
 
+    // ============================================================
+    // RECOVERED CONTEXT
+    // ============================================================
     expect(result.context.phase).toBe("HUMAN_REVIEW");
 
     expect(result.context.failureCount).toBe(3);
 
-    // Human escalation does not start another retry.
+    // No extra retry is started.
     expect(result.context.retryCount).toBe(2);
 
     expect(result.context.cooldownUntilMs).toBeNull();
 
     // Temporary assumptions are removed.
-    // Original cue remains for human review.
     expect(result.context.workingMemory).toEqual({
       cue: {
         id: "cue-1",
       },
     });
 
+    // ============================================================
+    // AUDIT EVENT
+    // ============================================================
     expect(result.audit.id).toBe("audit-3");
 
     expect(result.audit.action).toBe("ESCALATE_TO_HUMAN");
 
     expect(result.audit.failureCount).toBe(3);
+
+    // ============================================================
+    // EXECUTION SAFETY
+    // ============================================================
+    expect(result.executionSafety.status).toBe("BLOCKED");
+
+    expect(result.executionSafety.failure).toBe("HALLUCINATION_DETECTED");
   });
 
   // ============================================================
@@ -215,10 +267,10 @@ describe("recoverFromFailure", () => {
       sessionId: "session-1",
       phase: "POLICY_SAFETY",
 
-      // This is the first failure.
+      // First failure.
       failureCount: 0,
 
-      // No retry has been consumed.
+      // No retry consumed yet.
       retryCount: 0,
 
       // Retry budget exists,
@@ -244,27 +296,34 @@ describe("recoverFromFailure", () => {
       createdAt: "2026-08-30T01:03:00.000Z",
     });
 
+    // ============================================================
+    // RECOVERY DECISION
+    // ============================================================
     expect(result.decision.action).toBe("ESCALATE_TO_HUMAN");
 
+    // ============================================================
+    // RECOVERED CONTEXT
+    // ============================================================
     expect(result.context.phase).toBe("HUMAN_REVIEW");
 
-    // Policy violation is recorded as failure #1.
+    // Policy violation becomes failure #1.
     expect(result.context.failureCount).toBe(1);
 
-    // Safety rule:
-    // no autonomous retry is allowed.
+    // No autonomous retry allowed.
     expect(result.context.retryCount).toBe(0);
 
     expect(result.context.cooldownUntilMs).toBeNull();
 
-    // Unsafe temporary assumptions are removed.
+    // Remove unsafe temporary assumptions.
     expect(result.context.workingMemory).toEqual({
       cue: {
         id: "cue-1",
       },
     });
 
-    // Audit proves where and why the safety stop happened.
+    // ============================================================
+    // AUDIT EVENT
+    // ============================================================
     expect(result.audit.id).toBe("audit-4");
 
     expect(result.audit.failure).toBe("POLICY_VIOLATION");
@@ -274,5 +333,12 @@ describe("recoverFromFailure", () => {
     expect(result.audit.phase).toBe("POLICY_SAFETY");
 
     expect(result.audit.evidenceIds).toEqual(["evidence-policy-1"]);
+
+    // ============================================================
+    // EXECUTION SAFETY
+    // ============================================================
+    expect(result.executionSafety.status).toBe("BLOCKED");
+
+    expect(result.executionSafety.failure).toBe("POLICY_VIOLATION");
   });
 });
