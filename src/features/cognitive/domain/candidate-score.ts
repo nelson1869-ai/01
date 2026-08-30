@@ -18,7 +18,7 @@ export function scoreCandidate(candidate: CandidateAction): CandidateScore {
   const cost = clampUnit(candidate.estimatedCost);
 
   const value = clampUnit(
-    confidence * 0.35 + utility * 0.35 - risk * 0.2 - cost * 0.1,
+    confidence * 0.35 + utility * 0.3 + (1 - risk) * 0.25 + (1 - cost) * 0.1,
   );
 
   if (value < 0.4) {
