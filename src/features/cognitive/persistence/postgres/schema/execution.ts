@@ -54,6 +54,10 @@ export const executions = pgTable(
     }).notNull(),
   },
   (table) => [
+    unique("executions_execution_plan_unique").on(
+      table.executionId,
+      table.planId,
+    ),
     index("executions_session_id_idx").on(table.sessionId),
     index("executions_plan_id_idx").on(table.planId),
     check(
@@ -106,6 +110,11 @@ export const executionStepState = pgTable(
       name: "execution_step_state_step_fk",
       columns: [table.planId, table.stepId],
       foreignColumns: [actionPlanSteps.planId, actionPlanSteps.stepId],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "execution_step_state_execution_plan_fk",
+      columns: [table.executionId, table.planId],
+      foreignColumns: [executions.executionId, executions.planId],
     }).onDelete("restrict"),
     check(
       "execution_step_state_status_valid",
@@ -164,6 +173,14 @@ export const executionOperations = pgTable(
     }).notNull(),
   },
   (table) => [
+    foreignKey({
+      name: "execution_operations_execution_step_fk",
+      columns: [table.executionId, table.stepId],
+      foreignColumns: [
+        executionStepState.executionId,
+        executionStepState.stepId,
+      ],
+    }).onDelete("restrict"),
     unique("execution_operations_execution_step_generation_unique").on(
       table.executionId,
       table.stepId,

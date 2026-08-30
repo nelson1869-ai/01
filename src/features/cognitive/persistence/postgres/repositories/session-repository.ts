@@ -43,6 +43,20 @@ export class SessionRepository {
     return decodeCognitiveSessionRow(rows[0]);
   }
 
+  async findSessionByIdForUpdate(
+    executor: DatabaseExecutor,
+    sessionId: string,
+  ): Promise<PersistedCognitiveSession | null> {
+    const rows = await executor
+      .select()
+      .from(cognitiveSessions)
+      .where(eq(cognitiveSessions.sessionId, sessionId))
+      .for("update")
+      .limit(1);
+
+    return rows.length === 0 ? null : decodeCognitiveSessionRow(rows[0]);
+  }
+
   async findSessionByCueId(
     executor: DatabaseExecutor,
     cueId: string,

@@ -220,6 +220,15 @@ describe("live PostgreSQL execution and operation concurrency tests", () => {
       INSERT INTO action_plan_steps (plan_id, step_id, ordinal, description)
       VALUES (${fixture.planId}, 'step-op-1', 0, 'Send Email')
     `);
+    await context.db.execute(sql`
+      INSERT INTO execution_step_state (
+        execution_id, plan_id, step_id, status, operation_generation,
+        row_version, updated_at
+      ) VALUES (
+        ${fixture.executionId}, ${fixture.planId}, 'step-op-1', 'PENDING', 1,
+        0, NOW()
+      )
+    `);
 
     const op: PersistedExecutionOperation = {
       operationId: "op-res-1",
@@ -276,6 +285,15 @@ describe("live PostgreSQL execution and operation concurrency tests", () => {
     await context.db.execute(sql`
       INSERT INTO action_plan_steps (plan_id, step_id, ordinal, description)
       VALUES (${fixture.planId}, 'step-op-conflict-1', 0, 'Send Email')
+    `);
+    await context.db.execute(sql`
+      INSERT INTO execution_step_state (
+        execution_id, plan_id, step_id, status, operation_generation,
+        row_version, updated_at
+      ) VALUES (
+        ${fixture.executionId}, ${fixture.planId}, 'step-op-conflict-1',
+        'PENDING', 1, 0, NOW()
+      )
     `);
 
     const opA: PersistedExecutionOperation = {
@@ -342,6 +360,15 @@ describe("live PostgreSQL execution and operation concurrency tests", () => {
     await context.db.execute(sql`
       INSERT INTO action_plan_steps (plan_id, step_id, ordinal, description)
       VALUES (${fixture.planId}, 'step-unk-1', 0, 'Charge Card')
+    `);
+    await context.db.execute(sql`
+      INSERT INTO execution_step_state (
+        execution_id, plan_id, step_id, status, operation_generation,
+        row_version, updated_at
+      ) VALUES (
+        ${fixture.executionId}, ${fixture.planId}, 'step-unk-1', 'RUNNING', 1,
+        1, NOW()
+      )
     `);
 
     const unknownOp: PersistedExecutionOperation = {

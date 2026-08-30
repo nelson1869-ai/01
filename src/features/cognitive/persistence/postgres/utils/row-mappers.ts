@@ -12,6 +12,14 @@ import {
   persistedExecutionOperationSchema,
 } from "../../contracts/execution-operation";
 import {
+  type PersistedExecutionOperationAttempt,
+  persistedExecutionOperationAttemptSchema,
+} from "../../contracts/execution-operation-attempt";
+import {
+  type PersistedExecutionStepState,
+  persistedExecutionStepStateSchema,
+} from "../../contracts/execution-step-state";
+import {
   type StoredExecutionSafety,
   storedExecutionSafetySchema,
 } from "../../contracts/execution-safety";
@@ -225,6 +233,45 @@ export function decodeExecutionRow(row: unknown): PersistedExecution {
   return parsed.data;
 }
 
+export function decodeExecutionStepStateRow(
+  row: unknown,
+): PersistedExecutionStepState {
+  if (typeof row !== "object" || row === null) {
+    throw PersistenceError.invalidPersistedState(
+      "Execution step-state database row must be an object.",
+      { row },
+    );
+  }
+
+  const raw = row as Record<string, unknown>;
+  const candidate = {
+    executionId: raw.executionId ?? raw.execution_id,
+    planId: raw.planId ?? raw.plan_id,
+    stepId: raw.stepId ?? raw.step_id,
+    status: raw.status,
+    operationGeneration: Number(
+      raw.operationGeneration ?? raw.operation_generation,
+    ),
+    rowVersion: Number(raw.rowVersion ?? raw.row_version),
+    startedAt: normalizeDateString(raw.startedAt ?? raw.started_at ?? null),
+    completedAt: normalizeDateString(
+      raw.completedAt ?? raw.completed_at ?? null,
+    ),
+    error: raw.error ?? null,
+    updatedAt: normalizeDateString(raw.updatedAt ?? raw.updated_at),
+  };
+
+  const parsed = persistedExecutionStepStateSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw PersistenceError.invalidPersistedState(
+      "Failed to decode persisted execution step-state record.",
+      { issues: parsed.error.issues, row },
+    );
+  }
+
+  return parsed.data;
+}
+
 export function decodeExecutionOperationRow(
   row: unknown,
 ): PersistedExecutionOperation {
@@ -270,6 +317,41 @@ export function decodeExecutionOperationRow(
   if (!parsed.success) {
     throw PersistenceError.invalidPersistedState(
       `Failed to decode persisted execution operation record: ${JSON.stringify(parsed.error.issues)}`,
+      { issues: parsed.error.issues, row },
+    );
+  }
+
+  return parsed.data;
+}
+
+export function decodeExecutionOperationAttemptRow(
+  row: unknown,
+): PersistedExecutionOperationAttempt {
+  if (typeof row !== "object" || row === null) {
+    throw PersistenceError.invalidPersistedState(
+      "Execution operation-attempt database row must be an object.",
+      { row },
+    );
+  }
+
+  const raw = row as Record<string, unknown>;
+  const candidate = {
+    attemptId: raw.attemptId ?? raw.attempt_id,
+    operationId: raw.operationId ?? raw.operation_id,
+    attemptNumber: Number(raw.attemptNumber ?? raw.attempt_number),
+    status: raw.status,
+    workerId: raw.workerId ?? raw.worker_id ?? null,
+    startedAt: normalizeDateString(raw.startedAt ?? raw.started_at),
+    finishedAt: normalizeDateString(raw.finishedAt ?? raw.finished_at ?? null),
+    errorSummary: raw.errorSummary ?? raw.error_summary ?? null,
+    providerMetadata:
+      raw.providerMetadata ?? raw.provider_metadata ?? null,
+  };
+
+  const parsed = persistedExecutionOperationAttemptSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw PersistenceError.invalidPersistedState(
+      "Failed to decode persisted execution operation-attempt record.",
       { issues: parsed.error.issues, row },
     );
   }

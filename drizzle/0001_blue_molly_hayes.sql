@@ -1,0 +1,3 @@
+ALTER TABLE "executions" ADD CONSTRAINT "executions_execution_plan_unique" UNIQUE("execution_id","plan_id");--> statement-breakpoint
+ALTER TABLE "execution_step_state" ADD CONSTRAINT "execution_step_state_execution_plan_fk" FOREIGN KEY ("execution_id","plan_id") REFERENCES "public"."executions"("execution_id","plan_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "execution_operations" ADD CONSTRAINT "execution_operations_execution_step_fk" FOREIGN KEY ("execution_id","step_id") REFERENCES "public"."execution_step_state"("execution_id","step_id") ON DELETE restrict ON UPDATE no action;
