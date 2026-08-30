@@ -16,6 +16,8 @@ export type CognitivePhase =
   | "LEARN"
   | "SAVE_MEMORY"
   | "CLEAR_WORKING_MEMORY"
+  | "COOLDOWN"
+  | "HUMAN_REVIEW"
   | "IDLE";
 
 export type FailureStatus =
@@ -29,6 +31,7 @@ export type FailureStatus =
 export type AgentContext = Readonly<{
   sessionId: string;
   phase: CognitivePhase;
+  failureCount: number;
   retryCount: number;
   maxRetries: number;
   cooldownUntilMs: number | null;

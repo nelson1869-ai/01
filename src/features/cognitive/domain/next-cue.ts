@@ -9,6 +9,7 @@ export function receiveCue(context: AgentContext, cue: Cue): AgentContext {
   return {
     ...context,
     phase: "CUE",
+    failureCount: 0,
     retryCount: 0,
     cooldownUntilMs: null,
     workingMemory: {
