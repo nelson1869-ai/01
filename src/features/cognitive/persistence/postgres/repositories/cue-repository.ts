@@ -1,10 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
 import type { PersistedCueIngress } from "../../contracts/cue-ingress";
-import {
-  isUniqueConstraintViolation,
-  PersistenceError,
-} from "../errors/persistence-errors";
+import { PersistenceError } from "../errors/persistence-errors";
 import { cues } from "../schema/ingress";
 import type { DatabaseExecutor } from "../transactions/transaction-executor";
 import { computeCanonicalFingerprint } from "../utils/canonical-fingerprint";
@@ -54,8 +51,9 @@ export class CueRepository {
   ): Promise<{ isReplay: boolean; cue: PersistedCueIngress }> {
     const payloadHash = computeCanonicalFingerprint(cue.payload);
 
-    try {
-      await executor.insert(cues).values({
+    const insertedRows = await executor
+      .insert(cues)
+      .values({
         cueId: cue.cueId,
         source: cue.source,
         externalEventId: cue.externalEventId,
@@ -64,41 +62,40 @@ export class CueRepository {
         receivedAt: cue.receivedAt,
         payload: cue.payload,
         payloadHash,
-      });
+      })
+      .onConflictDoNothing({ target: [cues.source, cues.externalEventId] })
+      .returning();
 
-      return { isReplay: false, cue };
-    } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
-        const existing = await this.findCueByExternalIdentity(
-          executor,
-          cue.source,
-          cue.externalEventId,
-        );
+    if (insertedRows.length > 0) {
+      return { isReplay: false, cue: decodeCueRow(insertedRows[0]) };
+    }
 
-        if (existing !== null) {
-          const existingFingerprint = computeCanonicalFingerprint(
-            existing.payload,
-          );
-          if (
-            existingFingerprint === payloadHash &&
-            existing.type === cue.type
-          ) {
-            return { isReplay: true, cue: existing };
-          }
+    const existing = await this.findCueByExternalIdentity(
+      executor,
+      cue.source,
+      cue.externalEventId,
+    );
 
-          throw PersistenceError.idempotencyConflict(
-            `Cue with source "${cue.source}" and external event "${cue.externalEventId}" already exists with different payload or type.`,
-            {
-              source: cue.source,
-              externalEventId: cue.externalEventId,
-              existingCueId: existing.cueId,
-            },
-          );
-        }
+    if (existing !== null) {
+      const existingFingerprint = computeCanonicalFingerprint(existing.payload);
+      if (existingFingerprint === payloadHash && existing.type === cue.type) {
+        return { isReplay: true, cue: existing };
       }
 
-      throw error;
+      throw PersistenceError.idempotencyConflict(
+        `Cue with source "${cue.source}" and external event "${cue.externalEventId}" already exists with different payload or type.`,
+        {
+          source: cue.source,
+          externalEventId: cue.externalEventId,
+          existingCueId: existing.cueId,
+        },
+      );
     }
+
+    throw PersistenceError.staleWrite(
+      `Cue with source "${cue.source}" and external event "${cue.externalEventId}" conflicted but could not be retrieved.`,
+      { source: cue.source, externalEventId: cue.externalEventId },
+    );
   }
 }
 

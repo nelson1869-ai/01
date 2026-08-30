@@ -1,10 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
 import type { PersistedExecutionOperation } from "../../contracts/execution-operation";
-import {
-  isUniqueConstraintViolation,
-  PersistenceError,
-} from "../errors/persistence-errors";
+import { PersistenceError } from "../errors/persistence-errors";
 import { executionOperations } from "../schema/execution";
 import type { DatabaseExecutor } from "../transactions/transaction-executor";
 import { decodeExecutionOperationRow } from "../utils/row-mappers";
@@ -40,7 +37,10 @@ export class ExecutionOperationRepository {
         and(
           eq(executionOperations.executionId, executionId),
           eq(executionOperations.stepId, stepId),
-          eq(executionOperations.operationGeneration, operationGeneration),
+          eq(
+            executionOperations.operationGeneration,
+            operationGeneration,
+          ),
         ),
       )
       .limit(1);
@@ -59,8 +59,9 @@ export class ExecutionOperationRepository {
     isReplay: boolean;
     operation: PersistedExecutionOperation;
   }> {
-    try {
-      await executor.insert(executionOperations).values({
+    const insertedRows = await executor
+      .insert(executionOperations)
+      .values({
         operationId: operation.operationId,
         executionId: operation.executionId,
         stepId: operation.stepId,
@@ -79,43 +80,50 @@ export class ExecutionOperationRepository {
         rowVersion: operation.rowVersion,
         createdAt: operation.createdAt,
         updatedAt: operation.updatedAt,
-      });
+      })
+      .onConflictDoNothing()
+      .returning();
 
-      return { isReplay: false, operation };
-    } catch (error) {
-      if (isUniqueConstraintViolation(error)) {
-        const existing =
-          (await this.findOperationByIdempotencyKey(
-            executor,
-            operation.idempotencyKey,
-          )) ??
-          (await this.findOperationByLogicalIdentity(
-            executor,
-            operation.executionId,
-            operation.stepId,
-            operation.operationGeneration,
-          ));
+    if (insertedRows.length > 0) {
+      return {
+        isReplay: false,
+        operation: decodeExecutionOperationRow(insertedRows[0]),
+      };
+    }
 
-        if (existing !== null) {
-          if (
-            existing.requestFingerprint === operation.requestFingerprint &&
-            existing.operationKind === operation.operationKind
-          ) {
-            return { isReplay: true, operation: existing };
-          }
+    const existing =
+      (await this.findOperationByIdempotencyKey(
+        executor,
+        operation.idempotencyKey,
+      )) ??
+      (await this.findOperationByLogicalIdentity(
+        executor,
+        operation.executionId,
+        operation.stepId,
+        operation.operationGeneration,
+      ));
 
-          throw PersistenceError.idempotencyConflict(
-            `Execution operation with idempotency key "${operation.idempotencyKey}" already exists with different request fingerprint or kind.`,
-            {
-              idempotencyKey: operation.idempotencyKey,
-              existingOperationId: existing.operationId,
-            },
-          );
-        }
+    if (existing !== null) {
+      if (
+        existing.requestFingerprint === operation.requestFingerprint &&
+        existing.operationKind === operation.operationKind
+      ) {
+        return { isReplay: true, operation: existing };
       }
 
-      throw error;
+      throw PersistenceError.idempotencyConflict(
+        `Execution operation with idempotency key "${operation.idempotencyKey}" already exists with different request fingerprint or kind.`,
+        {
+          idempotencyKey: operation.idempotencyKey,
+          existingOperationId: existing.operationId,
+        },
+      );
     }
+
+    throw PersistenceError.staleWrite(
+      `Execution operation with idempotency key "${operation.idempotencyKey}" conflicted but could not be retrieved.`,
+      { idempotencyKey: operation.idempotencyKey },
+    );
   }
 }
 

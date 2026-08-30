@@ -14,18 +14,6 @@ import { SessionRepository } from "./session-repository";
 
 type MockExecutor = DatabaseExecutor;
 
-interface MockDbError extends Error {
-  code?: string;
-}
-
-function createUniqueConstraintError(): MockDbError {
-  const err: MockDbError = new Error(
-    "duplicate key value violates unique constraint",
-  );
-  err.code = "23505";
-  return err;
-}
-
 describe("repository and transaction unit invariants", () => {
   const sampleCue: PersistedCueIngress = {
     cueId: "cue-1",
@@ -74,9 +62,11 @@ describe("repository and transaction unit invariants", () => {
 
       const mockExecutor = {
         insert: () => ({
-          values: () => {
-            throw createUniqueConstraintError();
-          },
+          values: () => ({
+            onConflictDoNothing: () => ({
+              returning: () => [], // conflict occurred
+            }),
+          }),
         }),
         select: () => ({
           from: () => ({
@@ -107,9 +97,11 @@ describe("repository and transaction unit invariants", () => {
 
       const mockExecutor = {
         insert: () => ({
-          values: () => {
-            throw createUniqueConstraintError();
-          },
+          values: () => ({
+            onConflictDoNothing: () => ({
+              returning: () => [], // conflict occurred
+            }),
+          }),
         }),
         select: () => ({
           from: () => ({
@@ -381,9 +373,11 @@ describe("repository and transaction unit invariants", () => {
 
       const mockExecutor = {
         insert: () => ({
-          values: () => {
-            throw createUniqueConstraintError();
-          },
+          values: () => ({
+            onConflictDoNothing: () => ({
+              returning: () => [], // conflict occurred
+            }),
+          }),
         }),
         select: () => ({
           from: () => ({
@@ -428,9 +422,11 @@ describe("repository and transaction unit invariants", () => {
 
       const mockExecutor = {
         insert: () => ({
-          values: () => {
-            throw createUniqueConstraintError();
-          },
+          values: () => ({
+            onConflictDoNothing: () => ({
+              returning: () => [], // conflict occurred
+            }),
+          }),
         }),
         select: () => ({
           from: () => ({
