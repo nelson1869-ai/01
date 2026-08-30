@@ -64,3 +64,5 @@ export function computeCanonicalFingerprint(value: unknown): string {
     .digest("hex");
   return `sha256:${hash}`;
 }
+
+export const createCanonicalFingerprint = computeCanonicalFingerprint;
