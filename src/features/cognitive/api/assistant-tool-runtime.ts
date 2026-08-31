@@ -185,6 +185,9 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
         "Assistant tool runner requires a read-only tool intent.",
       );
     }
+    if (options?.signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
     await options?.onStage?.("SAFETY_CHECK");
     const cueId = `cue-${crypto.randomUUID()}`;
     const sessionId = `sess-${crypto.randomUUID()}`;

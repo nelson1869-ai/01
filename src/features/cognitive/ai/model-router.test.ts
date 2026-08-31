@@ -53,6 +53,15 @@ describe("Deterministic Model Router", () => {
       "What is a commit?",
       "Explain folders in programming.",
       "What is README?",
+      "What is package.json?",
+      "What is README.md?",
+      "What is tsconfig.json?",
+      "What is a TypeScript file?",
+      "What is a .tsx file?",
+      "Explain package.json.",
+      "What is JSON?",
+      "What is structured data?",
+      "Explain JSON objects.",
     ];
 
     for (const query of simpleQueries) {
@@ -79,6 +88,14 @@ describe("Deterministic Model Router", () => {
       "Inspect the pull requests on GitHub.",
       "Read README.md and summarize it.",
       "Delete my GitHub repository.",
+      "Read package.json.",
+      "Open README.md.",
+      "Inspect src/app/page.tsx.",
+      "Summarize package.json from my repository.",
+      "Read README.md from this repo.",
+      "Check tsconfig.json in my project.",
+      "Show me src/app/api/assistant/chat/route.ts.",
+      "Read README.md and explain its architecture.",
     ];
 
     for (const query of repoQueries) {
@@ -89,6 +106,31 @@ describe("Deterministic Model Router", () => {
         selectedProvider: "gemini",
         selectedModel: "gemini-3.5-flash-lite",
         reasonCode: "CURRENT_EXTERNAL_DATA",
+      });
+      expect(decision.fallbackChain).toEqual([
+        { provider: "ollama", model: "qwen3.5:9b" },
+      ]);
+    }
+  });
+
+  it("routes fast cloud structured requests to Gemini Flash-Lite with fallback chain", () => {
+    const structuredQueries = [
+      "Return a JSON object with fields language and description for TypeScript.",
+      "Extract the names and roles from this text and return JSON.",
+      "Classify this text into category and confidence and return JSON.",
+      "Format this information as structured JSON.",
+      "Return JSON matching fields title, summary, and priority.",
+      "Convert this list into a JSON array: apple, banana, mango.",
+    ];
+
+    for (const query of structuredQueries) {
+      expect(isExternalDataQuery(query)).toBe(false);
+      const decision = routeTask(query);
+      expect(decision).toMatchObject({
+        taskClass: "FAST_CLOUD_STRUCTURED",
+        selectedProvider: "gemini",
+        selectedModel: "gemini-3.5-flash-lite",
+        reasonCode: "FAST_CLOUD_STRUCTURED",
       });
       expect(decision.fallbackChain).toEqual([
         { provider: "ollama", model: "qwen3.5:9b" },
@@ -111,7 +153,7 @@ describe("Deterministic Model Router", () => {
     });
   });
 
-  it("routes varied complex architectural and reasoning queries to Gemini 3.7 Flash", () => {
+  it("routes varied complex architectural and reasoning queries to Gemini 3.7 Flash, including complex+JSON", () => {
     const complexQueries = [
       "Explain how to prevent race conditions.",
       "How do I avoid deadlocks in concurrent workers?",
@@ -123,6 +165,7 @@ describe("Deterministic Model Router", () => {
       "How should I architect a scalable event-processing system?",
       "Explain our distributed system architecture and consensus algorithm.",
       "Design a zero-downtime database schema migration strategy.",
+      "Design a fault-tolerant distributed queue and return the tradeoffs as JSON.",
     ];
 
     for (const query of complexQueries) {

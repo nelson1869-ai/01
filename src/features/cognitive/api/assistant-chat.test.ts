@@ -23,12 +23,14 @@ import {
   AssistantChatService,
   type AssistantConversationStorePort,
 } from "./assistant-chat-service";
-import type {
-  AssistantToolRunnerPort,
-  AssistantToolRunResult,
+import {
+  type AssistantToolRunnerPort,
+  type AssistantToolRunResult,
+  DatabaseAssistantToolRunner,
 } from "./assistant-tool-runtime";
 import { createAssistantChatPostHandler } from "../../../app/api/assistant/chat/route";
 import { AiProviderError, type AiErrorCode } from "../ai/ai-errors";
+import type { DatabaseClient } from "../persistence/postgres/transactions/transaction-executor";
 
 const NOW = "2026-08-31T00:00:00.000Z";
 
@@ -917,5 +919,184 @@ describe("M8.7 conversational assistant", () => {
     expect(turn.createdAt).toBe("2026-08-31T00:00:00.000Z");
     expect(turn.completedAt).toBe("2026-08-31T00:00:05.000Z");
     expect(turn.completedAt).not.toBe(turn.createdAt);
+  });
+
+  it("M8.10.2: live AssistantChatService allows harmless educational queries through centralized security", async () => {
+    const educationalQueries = [
+      "Explain how to create a React component.",
+      "What is a Git commit?",
+      "What is an API token?",
+      "What is README.md?",
+    ];
+
+    for (const query of educationalQueries) {
+      const store = new MemoryStore();
+      const interpreter = new FakeInterpreter(directIntent);
+      const composer = new FakeComposer("Educational explanation.");
+      const runner = new FakeToolRunner(verifiedTool);
+
+      const chatService = new AssistantChatService({
+        store,
+        interpreter,
+        composer,
+        toolRunner: runner,
+        now: () => NOW,
+      });
+
+      const response = await chatService.chat({ message: query });
+      expect(response.status).not.toBe("DENIED");
+      expect(response.status).toBe("COMPLETED");
+    }
+  });
+
+  it("M8.10.2: live AssistantChatService deterministically denies real mutations with 0 AI/tool calls", async () => {
+    const mutationQueries = [
+      "Delete my GitHub repository.",
+      "Change README.md in my repo.",
+      "Commit these changes to GitHub.",
+      "Add a GitHub secret.",
+    ];
+
+    for (const query of mutationQueries) {
+      const store = new MemoryStore();
+      const interpreter = new FakeInterpreter(directIntent);
+      const composer = new FakeComposer();
+      const runner = new FakeToolRunner(verifiedTool);
+
+      const chatService = new AssistantChatService({
+        store,
+        interpreter,
+        composer,
+        toolRunner: runner,
+        now: () => NOW,
+      });
+
+      const response = await chatService.chat({ message: query });
+      expect(response.status).toBe("DENIED");
+      expect(interpreter.calls).toHaveLength(0);
+      expect(composer.directCalls).toBe(0);
+      expect(composer.verifiedCalls).toBe(0);
+      expect(runner.calls).toHaveLength(0);
+    }
+  });
+
+  it("M8.10.2: caller abort cleans up turn so no abandoned PROCESSING turn remains", async () => {
+    const store = new MemoryStore();
+    const abortController = new AbortController();
+
+    const interpreter: AssistantIntentInterpreterPort = {
+      interpret: () => {
+        abortController.abort();
+        throw new DOMException("The operation was aborted.", "AbortError");
+      },
+    };
+
+    const chatService = new AssistantChatService({
+      store,
+      interpreter,
+      composer: new FakeComposer("Should not compose."),
+      toolRunner: new FakeToolRunner(verifiedTool),
+      now: () => NOW,
+    });
+
+    const pending = chatService.chat(
+      { message: "What is TypeScript?" },
+      { signal: abortController.signal },
+    );
+
+    await expect(pending).rejects.toThrow("The operation was aborted.");
+
+    expect(store.turns.length).toBe(1);
+    const turn = store.turns[0];
+    expect(turn.status).toBe("FAILED");
+    expect(turn.assistantMessage).toBe("Request canceled by caller.");
+
+    // Verify there are NO processing turns remaining
+    const processingTurns = store.turns.filter(
+      (t) => t.status === "PROCESSING",
+    );
+    expect(processingTurns.length).toBe(0);
+  });
+
+  it("M8.10.2: excludes failed and processing turns from conversational AI context", async () => {
+    const store = new MemoryStore();
+    await store.createConversation("conv-test", NOW);
+
+    // Add a completed turn
+    const turn1 = await store.beginTurn({
+      turnId: "turn-1",
+      conversationId: "conv-test",
+      userMessage: "Hello AutoDo",
+      createdAt: NOW,
+    });
+    await store.completeTurn({
+      turnId: turn1.turnId,
+      kind: "DIRECT_ANSWER",
+      status: "COMPLETED",
+      assistantMessage: "Hello! How can I help?",
+      decisionSummary: ["Greeted user."],
+      completedAt: NOW,
+    });
+
+    // Add a failed/aborted turn
+    const turn2 = await store.beginTurn({
+      turnId: "turn-2",
+      conversationId: "conv-test",
+      userMessage: "Aborted question",
+      createdAt: NOW,
+    });
+    await store.completeTurn({
+      turnId: turn2.turnId,
+      kind: "DIRECT_ANSWER",
+      status: "FAILED",
+      assistantMessage: "Request canceled by caller.",
+      decisionSummary: ["Canceled."],
+      completedAt: NOW,
+    });
+
+    const interpreter = new FakeInterpreter(directIntent);
+
+    const chatService = new AssistantChatService({
+      store,
+      interpreter,
+      composer: new FakeComposer("Second completed answer."),
+      toolRunner: new FakeToolRunner(verifiedTool),
+      now: () => NOW,
+    });
+
+    await chatService.chat({
+      conversationId: "conv-test",
+      message: "Follow-up question",
+    });
+
+    expect(interpreter.calls).toHaveLength(1);
+    // Only turn-1 should be in context; turn-2 (FAILED) must be excluded
+    expect(interpreter.calls[0].context).toHaveLength(1);
+    expect(interpreter.calls[0].context[0].userMessage).toBe("Hello AutoDo");
+  });
+
+  it("M8.10.2: DatabaseAssistantToolRunner rejects immediately on pre-durable caller abort without database cue/session creation", async () => {
+    let dbCallCount = 0;
+    const fakeDb = new Proxy({} as unknown as DatabaseClient, {
+      get() {
+        dbCallCount++;
+        throw new Error("DB should not be touched on pre-durable abort.");
+      },
+    });
+
+    const runner = new DatabaseAssistantToolRunner(fakeDb);
+    const abortCtrl = new AbortController();
+    abortCtrl.abort();
+
+    await expect(
+      runner.run(
+        toolIntent,
+        "Read README.md",
+        NOW,
+        { signal: abortCtrl.signal },
+      ),
+    ).rejects.toThrow("The operation was aborted.");
+
+    expect(dbCallCount).toBe(0);
   });
 });

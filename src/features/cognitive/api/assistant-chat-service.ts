@@ -39,35 +39,13 @@ import {
   safeRetryMessage,
   safeToolExecutionMessage,
 } from "./assistant-progress";
+import {
+  deterministicDenialReason,
+  redactAssistantMessage,
+} from "./assistant-security";
 
+export { deterministicDenialReason, redactAssistantMessage };
 export type { AssistantTurnKind, AssistantTurnStatus };
-
-const FORBIDDEN_WRITE_PATTERNS: readonly RegExp[] = [
-  /\b(delete|remove|drop|destroy)\b/i,
-  /\b(create|make|add|post|write|edit|update|modify|change|patch)\b/i,
-  /\b(push|commit|merge|rebase|publish|deploy)\b/i,
-  /(secret|token|password|credential|api[_-]?key|bearer)/i,
-];
-
-export function deterministicDenialReason(message: string): string | null {
-  for (const pattern of FORBIDDEN_WRITE_PATTERNS) {
-    if (pattern.test(message)) {
-      return "I can’t perform that action with the current read-only GitHub policy.";
-    }
-  }
-  return null;
-}
-
-export function redactAssistantMessage(text: string): string {
-  return text
-    .replace(/ghp_[a-zA-Z0-9]{30,}/g, "[REDACTED_GITHUB_TOKEN]")
-    .replace(/github_pat_[a-zA-Z0-9_]{30,}/g, "[REDACTED_GITHUB_TOKEN]")
-    .replace(/AIzaSy[a-zA-Z0-9_-]{33}/g, "[REDACTED_GEMINI_KEY]")
-    .replace(
-      /bearer\s+[a-zA-Z0-9._~+/-]+=*/gi,
-      "Bearer [REDACTED_AUTH_HEADER]",
-    );
-}
 
 export interface AssistantConversationStorePort {
   createConversation(
@@ -162,6 +140,9 @@ function boundedContext(
   const selected: SafeConversationTurn[] = [];
   for (let i = turns.length - 1; i >= 0; i--) {
     const turn = turns[i];
+    if (turn.status === "PROCESSING" || turn.status === "FAILED") {
+      continue;
+    }
     const user = turn.userMessage.slice(0, remaining);
     remaining -= user.length;
     const assistant = (turn.assistantMessage ?? "").slice(0, remaining);
@@ -782,10 +763,36 @@ export class AssistantChatService {
         ],
       });
     } catch (error: unknown) {
-      if (
+      const isAborted =
         options?.signal?.aborted ||
-        (error instanceof Error && error.name === "AbortError")
-      ) {
+        (error instanceof Error && error.name === "AbortError");
+
+      if (isAborted) {
+        try {
+          await this.dependencies.store.completeTurn({
+            turnId: turn.turnId,
+            kind: completedTool ? "TOOL_REQUIRED" : "DIRECT_ANSWER",
+            status: "FAILED",
+            assistantMessage: "Request canceled by caller.",
+            decisionSummary: externalActionAttempted
+              ? [
+                  "The request was canceled by the caller.",
+                  "Durable external action state was preserved.",
+                ]
+              : [
+                  "The request was canceled by the caller.",
+                  "No external action was performed.",
+                ],
+            cueId: completedTool?.cueId ?? null,
+            sessionId: completedTool?.sessionId ?? null,
+            executionId: completedTool?.executionId ?? null,
+            verificationId: completedTool?.verificationId ?? null,
+            completedAt: getNow(),
+          });
+        } catch {
+          // Ignore if turn was already completed
+        }
+
         throw error instanceof Error && error.name === "AbortError"
           ? error
           : new DOMException("The operation was aborted.", "AbortError");

@@ -34,9 +34,10 @@ const STATIC_CAPABILITY_PATTERNS: readonly RegExp[] = [
 ];
 
 const EXTERNAL_DATA_PATTERNS: readonly RegExp[] = [
-  // Specific file paths or README
+  // Specific file paths or README with action verbs
   /\b(read|inspect|summarize|check|view|open|show|find|list)\b[\s\S]{0,40}\b(readme(\.md)?|[a-z0-9_./-]+\.(md|json|ts|tsx|js|jsx|yaml|yml|toml|sql|txt|py|go|rs|css|html))\b/i,
-  /\b[a-z0-9_./-]+\.(md|json|ts|tsx|js|jsx|yaml|yml|toml|sql|py|go|rs)\b/i,
+  // Explicit path structure
+  /\b(src|app|lib|features|packages|components|pages|api|routes)\/[a-z0-9_./-]+\b/i,
 
   // Explicit repository inspection
   /\b(in|from|of)\s+(my|the|this)\s+(repo|repository|codebase|project)\b/i,
@@ -51,6 +52,21 @@ const EXTERNAL_DATA_PATTERNS: readonly RegExp[] = [
 
   // Mutation commands targeting repository (routed to external data then denied safely)
   /\b(delete|remove)\s+(my\s+|the\s+)?(github\s+)?(repository|repo)\b/i,
+];
+
+const EXTERNAL_DATA_EXCLUSIONS: readonly RegExp[] = [
+  /^(what\s+is|what\s+are|what\s+does|explain)\s+(a\s+|an\s+|the\s+)?([a-z0-9_.-]+\.(md|json|ts|tsx|js|jsx)|typescript\s+files?|\.tsx\s+files?|readme(\.md)?|package\.json|tsconfig\.json)[?.!]*$/i,
+];
+
+const FAST_STRUCTURED_PATTERNS: readonly RegExp[] = [
+  /\b(return|format|output|give|generate|produce|extract|convert|transform|classify)\b[\s\S]{0,80}\b(as\s+(a\s+)?(structured\s+)?json|in\s+(structured\s+)?json|(a\s+)?(structured\s+)?json(\s+(object|array|schema|payload|blob|response|format|structure))?|matching\s+fields?|into\s+(a\s+)?(category|json\s+array|json\s+object)|return\s+json)\b/i,
+  /\b(return|output|format|extract|produce)\s+(a\s+)?(structured\s+)?json\b/i,
+  /\b(convert|format|transform)\s+this\s+[\s\S]{0,40}\s+into\s+a\s+(structured\s+)?json\s+(array|object)?\b/i,
+  /\band\s+return\s+(it\s+as\s+|as\s+)?(structured\s+)?json\b/i,
+];
+
+const FAST_STRUCTURED_EXCLUSIONS: readonly RegExp[] = [
+  /^(what\s+is|what\s+are|what\s+does|explain)\s+(json|structured\s+data|json\s+objects?)[?.!]*$/i,
 ];
 
 interface ComplexitySignal {
@@ -105,7 +121,18 @@ export function isStaticCapabilityQuery(message: string): boolean {
 
 export function isExternalDataQuery(message: string): boolean {
   const normalized = normalizeTaskMessage(message);
+  if (EXTERNAL_DATA_EXCLUSIONS.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
   return EXTERNAL_DATA_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isFastCloudStructuredQuery(message: string): boolean {
+  const normalized = normalizeTaskMessage(message);
+  if (FAST_STRUCTURED_EXCLUSIONS.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
+  return FAST_STRUCTURED_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export function calculateComplexityScore(message: string): number {
@@ -164,7 +191,18 @@ export function routeTask(message: string): ModelRouteDecision {
     };
   }
 
-  // 4. Default: Simple General Conversation (Local-first with Qwen)
+  // 4. Fast Cloud Structured (JSON extraction / formatting / classification)
+  if (isFastCloudStructuredQuery(normalized)) {
+    return {
+      taskClass: "FAST_CLOUD_STRUCTURED",
+      selectedProvider: "gemini",
+      selectedModel: "gemini-3.5-flash-lite",
+      reasonCode: "FAST_CLOUD_STRUCTURED",
+      fallbackChain: [{ provider: "ollama", model: "qwen3.5:9b" }],
+    };
+  }
+
+  // 5. Default: Simple General Conversation (Local-first with Qwen)
   return {
     taskClass: "SIMPLE_GENERAL",
     selectedProvider: "ollama",
