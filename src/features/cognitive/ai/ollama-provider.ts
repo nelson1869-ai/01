@@ -68,16 +68,42 @@ export class OllamaStructuredAiProvider implements StructuredAiProvider {
   async generateStructured<T>(
     request: StructuredAiRequest<T>,
   ): Promise<StructuredAiResponse<T>> {
+    if (request.signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
     const model = request.model ?? this.defaultModel;
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
-    const controller = new AbortController();
+    const internalTimeoutController = new AbortController();
+    let timedOut = false;
+
+    const combinedSignal = request.signal
+      ? AbortSignal.any([request.signal, internalTimeoutController.signal])
+      : internalTimeoutController.signal;
+
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => {
-        controller.abort();
+        timedOut = true;
+        internalTimeoutController.abort();
         reject(AiProviderError.timeout(this.providerName, timeoutMs));
       }, timeoutMs);
+    });
+
+    let abortListener: (() => void) | undefined;
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (request.signal?.aborted) {
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+        return;
+      }
+      if (request.signal) {
+        abortListener = () => {
+          internalTimeoutController.abort();
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        };
+        request.signal.addEventListener("abort", abortListener, { once: true });
+      }
     });
 
     const startTime = Date.now();
@@ -111,10 +137,16 @@ export class OllamaStructuredAiProvider implements StructuredAiProvider {
               "Content-Type": "application/json",
             },
             body: JSON.stringify(payload),
-            signal: controller.signal,
+            signal: combinedSignal,
           });
         } catch (fetchError: unknown) {
-          if (controller.signal.aborted) {
+          if (request.signal?.aborted) {
+            throw fetchError instanceof Error &&
+              fetchError.name === "AbortError"
+              ? fetchError
+              : new DOMException("The operation was aborted.", "AbortError");
+          }
+          if (timedOut) {
             throw AiProviderError.timeout(this.providerName, timeoutMs);
           }
           const message =
@@ -225,10 +257,13 @@ export class OllamaStructuredAiProvider implements StructuredAiProvider {
         };
       };
 
-      return await Promise.race([executeCall(), timeoutPromise]);
+      return await Promise.race([executeCall(), timeoutPromise, abortPromise]);
     } finally {
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
+      }
+      if (abortListener && request.signal) {
+        request.signal.removeEventListener("abort", abortListener);
       }
     }
   }

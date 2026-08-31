@@ -209,7 +209,16 @@ function safeProviderFailure(error: unknown): {
   };
 }
 
-export function isCrossProviderFallbackEligible(error: unknown): boolean {
+export function isCrossProviderFallbackEligible(
+  error: unknown,
+  signal?: AbortSignal,
+): boolean {
+  if (signal?.aborted) {
+    return false;
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return false;
+  }
   if (error instanceof AiProviderError) {
     if (error.code === "SAFETY_BLOCKED") {
       return false;
@@ -281,12 +290,13 @@ export class AssistantChatService {
   ): Promise<AssistantChatResponseData> {
     const startTime = Date.now();
     const telemetryCollector = new SimpleAiTelemetryCollector();
-    const now = this.dependencies.now?.() ?? new Date().toISOString();
+    const getNow = this.dependencies.now ?? (() => new Date().toISOString());
+    const requestStartedAt = getNow();
     const requestId = options?.requestId ?? `req-${crypto.randomUUID()}`;
     const emitter = new ProgressEmitter(
       options?.progressSink ?? new NoopAssistantProgressSink(),
       requestId,
-      () => now,
+      getNow,
     );
 
     await emitter.emit({ stage: "RECEIVED" });
@@ -294,7 +304,10 @@ export class AssistantChatService {
     const conversationId =
       request.conversationId ?? `conv-${crypto.randomUUID()}`;
     if (!request.conversationId) {
-      await this.dependencies.store.createConversation(conversationId, now);
+      await this.dependencies.store.createConversation(
+        conversationId,
+        requestStartedAt,
+      );
     }
     const sanitizedMessage = redactAssistantMessage(request.message);
 
@@ -309,7 +322,7 @@ export class AssistantChatService {
       turnId: `turn-${crypto.randomUUID()}`,
       conversationId,
       userMessage: sanitizedMessage,
-      createdAt: now,
+      createdAt: requestStartedAt,
     });
 
     const routeDecision = routeTask(sanitizedMessage);
@@ -346,7 +359,7 @@ export class AssistantChatService {
         sessionId: input.sessionId,
         executionId: input.executionId,
         verificationId: input.verificationId,
-        completedAt: now,
+        completedAt: getNow(),
       });
       const totalDurationMs = Date.now() - startTime;
       const modelSelection: AssistantModelSelection = input.modelSelection ?? {
@@ -466,7 +479,7 @@ export class AssistantChatService {
         });
       } catch (interpreterError: unknown) {
         if (
-          isCrossProviderFallbackEligible(interpreterError) &&
+          isCrossProviderFallbackEligible(interpreterError, options?.signal) &&
           routeDecision.fallbackChain.length > 0
         ) {
           const fallback = routeDecision.fallbackChain[0];
@@ -560,7 +573,7 @@ export class AssistantChatService {
         } catch (composerError: unknown) {
           if (
             !fallbackUsed &&
-            isCrossProviderFallbackEligible(composerError) &&
+            isCrossProviderFallbackEligible(composerError, options?.signal) &&
             routeDecision.fallbackChain.length > 0
           ) {
             const fallback = routeDecision.fallbackChain[0];
@@ -618,7 +631,7 @@ export class AssistantChatService {
       const tool = await this.dependencies.toolRunner.run(
         intent,
         sanitizedMessage,
-        now,
+        getNow(),
         {
           signal: options?.signal,
           onStage: async (stage) => {
@@ -668,7 +681,7 @@ export class AssistantChatService {
         } catch (composerError: unknown) {
           if (
             !fallbackUsed &&
-            isCrossProviderFallbackEligible(composerError) &&
+            isCrossProviderFallbackEligible(composerError, options?.signal) &&
             routeDecision.fallbackChain.length > 0
           ) {
             const fallback = routeDecision.fallbackChain[0];
@@ -769,6 +782,14 @@ export class AssistantChatService {
         ],
       });
     } catch (error: unknown) {
+      if (
+        options?.signal?.aborted ||
+        (error instanceof Error && error.name === "AbortError")
+      ) {
+        throw error instanceof Error && error.name === "AbortError"
+          ? error
+          : new DOMException("The operation was aborted.", "AbortError");
+      }
       await emitter.emit({ stage: "FAILED" });
       const failure = safeProviderFailure(error);
       const decisionSummary = externalActionAttempted

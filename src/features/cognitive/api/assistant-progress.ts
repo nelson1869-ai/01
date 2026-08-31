@@ -102,8 +102,18 @@ export function safeToolExecutionMessage(input: {
   if (input.action === "github.issues.list") {
     return "Listing open issues.";
   }
-  if (input.action === "github.pulls.list") {
+  if (
+    input.action === "github.pull_requests.list" ||
+    input.action === "github.pulls.list"
+  ) {
     return "Listing open pull requests.";
+  }
+  if (
+    (input.action === "github.pull_request.get" ||
+      input.action === "github.pulls.get") &&
+    input.pullNumber
+  ) {
+    return `Reading pull request #${Math.floor(Math.abs(input.pullNumber))}.`;
   }
   return "Reading the repository.";
 }

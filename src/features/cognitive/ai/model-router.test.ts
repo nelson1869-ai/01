@@ -10,9 +10,9 @@ import {
 
 describe("Deterministic Model Router", () => {
   it("normalizes task messages consistently", () => {
-    expect(normalizeTaskMessage("  Explain   how to PREVENT race conditions.  ")).toBe(
-      "explain how to prevent race conditions.",
-    );
+    expect(
+      normalizeTaskMessage("  Explain   how to PREVENT race conditions.  "),
+    ).toBe("explain how to prevent race conditions.");
   });
 
   it("recognizes static AutoDo capability and greeting queries", () => {
@@ -46,9 +46,17 @@ describe("Deterministic Model Router", () => {
       "What is a variable?",
       "Help me understand CSS flexbox.",
       "How do promises work in JavaScript?",
+      "What is a file?",
+      "What is a directory?",
+      "What is GitHub?",
+      "What is a pull request?",
+      "What is a commit?",
+      "Explain folders in programming.",
+      "What is README?",
     ];
 
     for (const query of simpleQueries) {
+      expect(isExternalDataQuery(query)).toBe(false);
       expect(calculateComplexityScore(query)).toBeLessThan(2);
       const decision = routeTask(query);
       expect(decision).toMatchObject({

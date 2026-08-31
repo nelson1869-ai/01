@@ -40,18 +40,26 @@ export class GeminiStructuredAiProvider implements StructuredAiProvider {
       throw AiProviderError.missingCredential(this.providerName);
     }
 
+    if (request.signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
     const modelName = request.model ?? this.defaultModel;
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
     const startTime = Date.now();
-    const abortController = new AbortController();
+    const internalTimeoutController = new AbortController();
     let timedOut = false;
+
+    const combinedSignal = request.signal
+      ? AbortSignal.any([request.signal, internalTimeoutController.signal])
+      : internalTimeoutController.signal;
 
     const generatePromise = (async () => {
       try {
         const config: Record<string, unknown> = {
           systemInstruction: request.systemInstruction,
           responseMimeType: "application/json",
-          abortSignal: abortController.signal,
+          abortSignal: combinedSignal,
         };
 
         if (request.jsonSchema) {
@@ -66,7 +74,12 @@ export class GeminiStructuredAiProvider implements StructuredAiProvider {
 
         return response;
       } catch (err: unknown) {
-        if (timedOut || abortController.signal.aborted) {
+        if (request.signal?.aborted) {
+          throw err instanceof Error && err.name === "AbortError"
+            ? err
+            : new DOMException("The operation was aborted.", "AbortError");
+        }
+        if (timedOut) {
           throw AiProviderError.timeout(this.providerName, timeoutMs);
         }
         throw this.mapGeminiError(err);
@@ -80,13 +93,32 @@ export class GeminiStructuredAiProvider implements StructuredAiProvider {
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => {
         timedOut = true;
-        abortController.abort();
+        internalTimeoutController.abort();
         reject(AiProviderError.timeout(this.providerName, timeoutMs));
       }, timeoutMs);
     });
 
+    let abortListener: (() => void) | undefined;
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (request.signal?.aborted) {
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+        return;
+      }
+      if (request.signal) {
+        abortListener = () => {
+          internalTimeoutController.abort();
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        };
+        request.signal.addEventListener("abort", abortListener, { once: true });
+      }
+    });
+
     try {
-      const response = await Promise.race([generatePromise, timeoutPromise]);
+      const response = await Promise.race([
+        generatePromise,
+        timeoutPromise,
+        abortPromise,
+      ]);
       const latencyMs = Date.now() - startTime;
       const finishedAt = new Date().toISOString();
 
@@ -139,6 +171,9 @@ export class GeminiStructuredAiProvider implements StructuredAiProvider {
     } finally {
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
+      }
+      if (abortListener && request.signal) {
+        request.signal.removeEventListener("abort", abortListener);
       }
     }
   }

@@ -89,7 +89,7 @@ export class ReliableStructuredAiProvider implements StructuredAiProvider {
     "TIMEOUT" | "RATE_LIMITED" | "PROVIDER_UNAVAILABLE",
     number
   >;
-  private readonly sleepFn: (ms: number) => Promise<void>;
+  private readonly customSleepFn?: (ms: number) => Promise<void>;
   private readonly defaultCollector?: AiTelemetryCollector;
 
   constructor(
@@ -103,15 +103,48 @@ export class ReliableStructuredAiProvider implements StructuredAiProvider {
       ...DEFAULT_BACKOFF_DELAYS_MS,
       ...(options.backoffDelaysMs ?? {}),
     };
-    this.sleepFn =
-      options.sleepFn ??
-      ((ms: number) => new Promise((res) => setTimeout(res, ms)));
+    this.customSleepFn = options.sleepFn;
     this.defaultCollector = options.telemetryCollector;
+  }
+
+  private async sleepWithAbort(
+    ms: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+    if (this.customSleepFn) {
+      await this.customSleepFn(ms);
+      if (signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+      return;
+    }
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (signal) {
+          signal.removeEventListener("abort", onAbort);
+        }
+        resolve();
+      }, ms);
+      function onAbort() {
+        clearTimeout(timer);
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      }
+      if (signal) {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
   }
 
   async generateStructured<T>(
     request: StructuredAiRequest<T>,
   ): Promise<StructuredAiResponse<T>> {
+    if (request.signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
     const stage = normalizeAiStage(request.taskName);
     const collector = request.telemetryCollector ?? this.defaultCollector;
     const model = request.model ?? this.defaultModel;
@@ -121,6 +154,10 @@ export class ReliableStructuredAiProvider implements StructuredAiProvider {
     const maxAttempts = 1 + this.maxRetries;
 
     while (attempt <= maxAttempts) {
+      if (request.signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+
       try {
         const response = await this.delegate.generateStructured(request);
         const durationMs = Date.now() - stageStart;
@@ -137,6 +174,15 @@ export class ReliableStructuredAiProvider implements StructuredAiProvider {
 
         return response;
       } catch (err: unknown) {
+        if (
+          request.signal?.aborted ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          throw err instanceof Error && err.name === "AbortError"
+            ? err
+            : new DOMException("The operation was aborted.", "AbortError");
+        }
+
         const isAiError = err instanceof AiProviderError;
         const errorCode: AiErrorCode = isAiError
           ? err.code
@@ -157,7 +203,7 @@ export class ReliableStructuredAiProvider implements StructuredAiProvider {
             attempt: attempt + 1,
             errorCode,
           });
-          await this.sleepFn(backoffMs);
+          await this.sleepWithAbort(backoffMs, request.signal);
           attempt++;
           continue;
         }

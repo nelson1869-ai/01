@@ -34,9 +34,23 @@ const STATIC_CAPABILITY_PATTERNS: readonly RegExp[] = [
 ];
 
 const EXTERNAL_DATA_PATTERNS: readonly RegExp[] = [
-  /\b(readme(\.md)?|repository|repo|github|issues?|pull\s*requests?|prs?|commits?|branch(es)?|files?|director(y|ies)|folders?|contents)\b/i,
-  /\b(check\s+(my|the)\s+(repo|repository|codebase))\b/i,
-  /\b(read|inspect|list|summarize)\s+[a-z0-9_.-]+(\.[a-z0-9]+)?\b/i,
+  // Specific file paths or README
+  /\b(read|inspect|summarize|check|view|open|show|find|list)\b[\s\S]{0,40}\b(readme(\.md)?|[a-z0-9_./-]+\.(md|json|ts|tsx|js|jsx|yaml|yml|toml|sql|txt|py|go|rs|css|html))\b/i,
+  /\b[a-z0-9_./-]+\.(md|json|ts|tsx|js|jsx|yaml|yml|toml|sql|py|go|rs)\b/i,
+
+  // Explicit repository inspection
+  /\b(in|from|of)\s+(my|the|this)\s+(repo|repository|codebase|project)\b/i,
+  /\b(check|inspect|explore|search|look\s+at)\s+(my|the|this)\s+(repo|repository|codebase)\b/i,
+  /\bwhat\s+(does\s+this\s+(repository|repo|project|codebase)\s+do|files\s+are\s+in\s+(the|this|my)\s+(repository|repo))\b/i,
+  /\b(inspect|check|explore|search)\s+my\s+repository\b/i,
+
+  // Issues / PR inspection
+  /\b(read|check|inspect|list|summarize|get|open|show)\s+(my\s+|the\s+|open\s+)?(github\s+)?(issues?|pull\s*requests?|prs?)(\s+#?\d+)?\b/i,
+  /\b(read|check|inspect|get|show)\s+(issue|pr|pull\s*request)\s+#?\d+\b/i,
+  /\b(list\s+open\s+pull\s*requests|list\s+open\s+issues)\b/i,
+
+  // Mutation commands targeting repository (routed to external data then denied safely)
+  /\b(delete|remove)\s+(my\s+|the\s+)?(github\s+)?(repository|repo)\b/i,
 ];
 
 interface ComplexitySignal {
@@ -49,13 +63,20 @@ const STRONG_COMPLEXITY_SIGNALS: readonly ComplexitySignal[] = [
   { pattern: /\brefactor(ing|s)?\b/i, weight: 2 },
   { pattern: /\brace\s+conditions?\b/i, weight: 2 },
   { pattern: /\bdeadlocks?\b/i, weight: 2 },
-  { pattern: /\bconcurrency(\s+(models?|problems?|issues?|control))?\b/i, weight: 2 },
+  {
+    pattern: /\bconcurrency(\s+(models?|problems?|issues?|control))?\b/i,
+    weight: 2,
+  },
   { pattern: /\bconsensus(\s+algorithms?)?\b/i, weight: 2 },
   { pattern: /\b(time|space|algorithmic)\s+complexity\b/i, weight: 2 },
   { pattern: /\bmemory\s+leak(\s+analysis)?\b/i, weight: 2 },
   { pattern: /\bformal\s+verification\b/i, weight: 2 },
   { pattern: /\bdifferential\s+testing\b/i, weight: 2 },
-  { pattern: /\b(system\s+design|design(\s+a|\s+an|\s+the)?\s+(distributed|scalable|event[\s-]processing))\b/i, weight: 2 },
+  {
+    pattern:
+      /\b(system\s+design|design(\s+a|\s+an|\s+the)?\s+(distributed|scalable|event[\s-]processing))\b/i,
+    weight: 2,
+  },
   { pattern: /\btransaction\s+isolation\b/i, weight: 2 },
   { pattern: /\bconsistency\s+models?\b/i, weight: 2 },
   { pattern: /\bfault[\s-]toleran(ce|t)\b/i, weight: 2 },

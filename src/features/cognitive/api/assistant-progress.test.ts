@@ -108,6 +108,15 @@ describe("Assistant Progress Streaming Contracts", () => {
     expect(safeToolExecutionMessage({ action: "github.pulls.list" })).toBe(
       "Listing open pull requests.",
     );
+    expect(
+      safeToolExecutionMessage({ action: "github.pull_requests.list" }),
+    ).toBe("Listing open pull requests.");
+    expect(
+      safeToolExecutionMessage({
+        action: "github.pull_request.get",
+        pullNumber: 15,
+      }),
+    ).toBe("Reading pull request #15.");
 
     expect(safeRetryMessage("RATE_LIMITED")).toBe(
       "The AI provider is temporarily busy. Retrying safely.",

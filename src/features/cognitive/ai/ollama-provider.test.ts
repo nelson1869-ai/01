@@ -6,21 +6,36 @@ describe("OllamaStructuredAiProvider", () => {
   const schema = z.object({ answer: z.string(), confidence: z.number() });
 
   it("enforces loopback-only URLs to prevent SSRF", () => {
-    expect(() => new OllamaStructuredAiProvider({ baseUrl: "http://192.168.1.100:11434" })).toThrow(
-      /must be a local loopback address/,
-    );
-    expect(() => new OllamaStructuredAiProvider({ baseUrl: "https://api.external.com" })).toThrow(
-      /must be a local loopback address/,
-    );
-    expect(() => new OllamaStructuredAiProvider({ baseUrl: "http://localhost:11434" })).not.toThrow();
-    expect(() => new OllamaStructuredAiProvider({ baseUrl: "http://127.0.0.1:11434" })).not.toThrow();
-    expect(() => new OllamaStructuredAiProvider({ baseUrl: "http://[::1]:11434" })).not.toThrow();
+    expect(
+      () =>
+        new OllamaStructuredAiProvider({
+          baseUrl: "http://192.168.1.100:11434",
+        }),
+    ).toThrow(/must be a local loopback address/);
+    expect(
+      () =>
+        new OllamaStructuredAiProvider({ baseUrl: "https://api.external.com" }),
+    ).toThrow(/must be a local loopback address/);
+    expect(
+      () =>
+        new OllamaStructuredAiProvider({ baseUrl: "http://localhost:11434" }),
+    ).not.toThrow();
+    expect(
+      () =>
+        new OllamaStructuredAiProvider({ baseUrl: "http://127.0.0.1:11434" }),
+    ).not.toThrow();
+    expect(
+      () => new OllamaStructuredAiProvider({ baseUrl: "http://[::1]:11434" }),
+    ).not.toThrow();
   });
 
   it("strips thinking tags and isolates pure text", () => {
-    const raw = "<think>\nThinking about the response\nLet me make sure...\n</think>{\"answer\": \"TypeScript is typed JS\", \"confidence\": 0.99}";
+    const raw =
+      '<think>\nThinking about the response\nLet me make sure...\n</think>{"answer": "TypeScript is typed JS", "confidence": 0.99}';
     const cleaned = stripThinking(raw);
-    expect(cleaned).toBe('{"answer": "TypeScript is typed JS", "confidence": 0.99}');
+    expect(cleaned).toBe(
+      '{"answer": "TypeScript is typed JS", "confidence": 0.99}',
+    );
     expect(cleaned).not.toContain("Thinking about the response");
   });
 
@@ -33,7 +48,8 @@ describe("OllamaStructuredAiProvider", () => {
           model: "qwen3.5:9b",
           message: {
             role: "assistant",
-            content: '{"answer": "TypeScript adds static types.", "confidence": 0.95}',
+            content:
+              '{"answer": "TypeScript adds static types.", "confidence": 0.95}',
             thinking: "Private model thoughts that should be discarded",
           },
           done: true,
@@ -53,7 +69,10 @@ describe("OllamaStructuredAiProvider", () => {
       schema,
     });
 
-    expect(res.value).toEqual({ answer: "TypeScript adds static types.", confidence: 0.95 });
+    expect(res.value).toEqual({
+      answer: "TypeScript adds static types.",
+      confidence: 0.95,
+    });
     expect(res.provider).toBe("ollama");
     expect(res.model).toBe("qwen3.5:9b");
     expect(res.usage?.totalTokens).toBe(70);
@@ -119,7 +138,9 @@ describe("OllamaStructuredAiProvider", () => {
   });
 
   it("normalizes connection failure into PROVIDER_UNAVAILABLE", async () => {
-    const fakeFetch: typeof fetch = vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:11434"));
+    const fakeFetch: typeof fetch = vi
+      .fn()
+      .mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:11434"));
 
     const provider = new OllamaStructuredAiProvider({ fetchFn: fakeFetch });
 
@@ -159,13 +180,15 @@ describe("OllamaStructuredAiProvider", () => {
   });
 
   it("handles timeout cancellation safely", async () => {
-    const fakeFetch: typeof fetch = vi.fn().mockImplementation((_url, init: RequestInit) => {
-      return new Promise((_, reject) => {
-        init.signal?.addEventListener("abort", () => {
-          reject(new Error("The operation was aborted"));
+    const fakeFetch: typeof fetch = vi
+      .fn()
+      .mockImplementation((_url, init: RequestInit) => {
+        return new Promise((_, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            reject(new Error("The operation was aborted"));
+          });
         });
       });
-    });
 
     const provider = new OllamaStructuredAiProvider({
       fetchFn: fakeFetch,
@@ -197,5 +220,42 @@ describe("OllamaStructuredAiProvider", () => {
     const health = await provider.checkHealth();
     expect(health.available).toBe(true);
     expect(health.models).toContain("qwen3.5:9b");
+  });
+
+  it("aborts fetch promptly when caller AbortSignal triggers without mapping to TIMEOUT", async () => {
+    const abortController = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+
+    const fakeFetch: typeof fetch = vi
+      .fn()
+      .mockImplementation((_url, init: RequestInit) => {
+        receivedSignal = init.signal as AbortSignal;
+        return new Promise((_, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            );
+          });
+        });
+      });
+
+    const provider = new OllamaStructuredAiProvider({
+      fetchFn: fakeFetch,
+      defaultTimeoutMs: 10_000,
+    });
+
+    const pending = provider.generateStructured({
+      taskName: "test-task",
+      systemInstruction: "test",
+      prompt: "test",
+      schema,
+      signal: abortController.signal,
+    });
+
+    // Caller aborts
+    abortController.abort();
+
+    await expect(pending).rejects.toThrow("The operation was aborted.");
+    expect(receivedSignal?.aborted).toBe(true);
   });
 });

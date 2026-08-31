@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AiProviderError, type AiErrorCode } from "./ai-errors";
-import type { StructuredAiProvider, StructuredAiRequest, StructuredAiResponse } from "./ai-provider-contract";
+import type {
+  StructuredAiProvider,
+  StructuredAiRequest,
+  StructuredAiResponse,
+} from "./ai-provider-contract";
 import {
   DEFAULT_BACKOFF_DELAYS_MS,
   ReliableStructuredAiProvider,
@@ -12,13 +16,22 @@ class MockProvider implements StructuredAiProvider {
   readonly providerName = "mock-gemini";
   readonly defaultModel = "gemini-3.7-flash";
   calls = 0;
-  private readonly queue: Array<{ outcome: "success"; value: unknown } | { outcome: "error"; error: Error }>;
+  private readonly queue: Array<
+    { outcome: "success"; value: unknown } | { outcome: "error"; error: Error }
+  >;
 
-  constructor(outcomes: Array<{ outcome: "success"; value: unknown } | { outcome: "error"; error: Error }>) {
+  constructor(
+    outcomes: Array<
+      | { outcome: "success"; value: unknown }
+      | { outcome: "error"; error: Error }
+    >,
+  ) {
     this.queue = [...outcomes];
   }
 
-  async generateStructured<T>(request: StructuredAiRequest<T>): Promise<StructuredAiResponse<T>> {
+  async generateStructured<T>(
+    request: StructuredAiRequest<T>,
+  ): Promise<StructuredAiResponse<T>> {
     this.calls++;
     const next = this.queue.shift();
     if (!next) {
@@ -41,9 +54,13 @@ describe("ReliableStructuredAiProvider", () => {
   const schema = z.object({ result: z.string() });
 
   it("completes on the first attempt without retry when provider succeeds", async () => {
-    const mock = new MockProvider([{ outcome: "success", value: { result: "ok" } }]);
+    const mock = new MockProvider([
+      { outcome: "success", value: { result: "ok" } },
+    ]);
     const collector = new SimpleAiTelemetryCollector();
-    const reliable = new ReliableStructuredAiProvider(mock, { telemetryCollector: collector });
+    const reliable = new ReliableStructuredAiProvider(mock, {
+      telemetryCollector: collector,
+    });
 
     const res = await reliable.generateStructured({
       taskName: "assistant-intent",
@@ -72,9 +89,21 @@ describe("ReliableStructuredAiProvider", () => {
     error: Error;
     expectedBackoffMs: number;
   }> = [
-    { code: "TIMEOUT", error: AiProviderError.timeout("mock-gemini", 30000), expectedBackoffMs: DEFAULT_BACKOFF_DELAYS_MS.TIMEOUT },
-    { code: "RATE_LIMITED", error: AiProviderError.rateLimited("mock-gemini"), expectedBackoffMs: DEFAULT_BACKOFF_DELAYS_MS.RATE_LIMITED },
-    { code: "PROVIDER_UNAVAILABLE", error: AiProviderError.providerUnavailable("mock-gemini"), expectedBackoffMs: DEFAULT_BACKOFF_DELAYS_MS.PROVIDER_UNAVAILABLE },
+    {
+      code: "TIMEOUT",
+      error: AiProviderError.timeout("mock-gemini", 30000),
+      expectedBackoffMs: DEFAULT_BACKOFF_DELAYS_MS.TIMEOUT,
+    },
+    {
+      code: "RATE_LIMITED",
+      error: AiProviderError.rateLimited("mock-gemini"),
+      expectedBackoffMs: DEFAULT_BACKOFF_DELAYS_MS.RATE_LIMITED,
+    },
+    {
+      code: "PROVIDER_UNAVAILABLE",
+      error: AiProviderError.providerUnavailable("mock-gemini"),
+      expectedBackoffMs: DEFAULT_BACKOFF_DELAYS_MS.PROVIDER_UNAVAILABLE,
+    },
   ];
 
   it.each(retryableScenarios)(
@@ -164,11 +193,34 @@ describe("ReliableStructuredAiProvider", () => {
     code: AiErrorCode;
     error: Error;
   }> = [
-    { name: "MISSING_CREDENTIAL", code: "MISSING_CREDENTIAL", error: AiProviderError.missingCredential("mock-gemini") },
-    { name: "AUTHENTICATION_FAILED", code: "AUTHENTICATION_FAILED", error: AiProviderError.authenticationFailed("mock-gemini") },
-    { name: "SAFETY_BLOCKED", code: "SAFETY_BLOCKED", error: AiProviderError.safetyBlocked("mock-gemini", "safety violation") },
-    { name: "INVALID_STRUCTURED_OUTPUT", code: "INVALID_STRUCTURED_OUTPUT", error: AiProviderError.invalidStructuredOutput("mock-gemini", "bad JSON") },
-    { name: "RESPONSE_TOO_LARGE", code: "RESPONSE_TOO_LARGE", error: new AiProviderError("too large", { code: "RESPONSE_TOO_LARGE", provider: "mock-gemini" }) },
+    {
+      name: "MISSING_CREDENTIAL",
+      code: "MISSING_CREDENTIAL",
+      error: AiProviderError.missingCredential("mock-gemini"),
+    },
+    {
+      name: "AUTHENTICATION_FAILED",
+      code: "AUTHENTICATION_FAILED",
+      error: AiProviderError.authenticationFailed("mock-gemini"),
+    },
+    {
+      name: "SAFETY_BLOCKED",
+      code: "SAFETY_BLOCKED",
+      error: AiProviderError.safetyBlocked("mock-gemini", "safety violation"),
+    },
+    {
+      name: "INVALID_STRUCTURED_OUTPUT",
+      code: "INVALID_STRUCTURED_OUTPUT",
+      error: AiProviderError.invalidStructuredOutput("mock-gemini", "bad JSON"),
+    },
+    {
+      name: "RESPONSE_TOO_LARGE",
+      code: "RESPONSE_TOO_LARGE",
+      error: new AiProviderError("too large", {
+        code: "RESPONSE_TOO_LARGE",
+        provider: "mock-gemini",
+      }),
+    },
   ];
 
   it.each(nonRetryableScenarios)(
@@ -246,14 +298,19 @@ describe("ReliableStructuredAiProvider", () => {
   });
 
   it("redacts secrets and protects sensitive data from telemetry", async () => {
-    const mock = new MockProvider([{ outcome: "success", value: { result: "ok" } }]);
+    const mock = new MockProvider([
+      { outcome: "success", value: { result: "ok" } },
+    ]);
     const collector = new SimpleAiTelemetryCollector();
-    const reliable = new ReliableStructuredAiProvider(mock, { telemetryCollector: collector });
+    const reliable = new ReliableStructuredAiProvider(mock, {
+      telemetryCollector: collector,
+    });
 
     await reliable.generateStructured({
       taskName: "assistant-intent",
       systemInstruction: "test",
-      prompt: "prompt with AIzaSySecret1234567890 and ghp_testSecretToken1234567890",
+      prompt:
+        "prompt with AIzaSySecret1234567890 and ghp_testSecretToken1234567890",
       schema,
     });
 
@@ -262,5 +319,58 @@ describe("ReliableStructuredAiProvider", () => {
     expect(serialized).not.toContain("ghp_testSecretToken1234567890");
     expect(serialized).not.toContain("prompt");
     expect(serialized).not.toContain("systemInstruction");
+  });
+
+  it("stops immediately and never retries when caller signal aborts during execution", async () => {
+    const abortController = new AbortController();
+    const mock = new MockProvider([
+      {
+        outcome: "error",
+        error: new DOMException("The operation was aborted.", "AbortError"),
+      },
+      { outcome: "success", value: { result: "should not reach" } },
+    ]);
+    const reliable = new ReliableStructuredAiProvider(mock);
+
+    abortController.abort();
+
+    await expect(
+      reliable.generateStructured({
+        taskName: "assistant-intent",
+        systemInstruction: "test",
+        prompt: "test",
+        schema,
+        signal: abortController.signal,
+      }),
+    ).rejects.toThrow("The operation was aborted.");
+
+    expect(mock.calls).toBe(0);
+  });
+
+  it("stops immediately and cancels attempt 2 if caller signal aborts during retry backoff", async () => {
+    const abortController = new AbortController();
+    const timeoutErr = AiProviderError.timeout("mock-gemini", 30000);
+    const mock = new MockProvider([
+      { outcome: "error", error: timeoutErr },
+      { outcome: "success", value: { result: "should not reach" } },
+    ]);
+
+    const reliable = new ReliableStructuredAiProvider(mock, {
+      sleepFn: async () => {
+        abortController.abort();
+      },
+    });
+
+    await expect(
+      reliable.generateStructured({
+        taskName: "assistant-intent",
+        systemInstruction: "test",
+        prompt: "test",
+        schema,
+        signal: abortController.signal,
+      }),
+    ).rejects.toThrow("The operation was aborted.");
+
+    expect(mock.calls).toBe(1);
   });
 });

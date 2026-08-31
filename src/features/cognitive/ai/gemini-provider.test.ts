@@ -25,7 +25,8 @@ describe("GeminiStructuredAiProvider and AI Error handling", () => {
   });
 
   it("never includes API key in error messages or sanitized text", () => {
-    const rawError = "Invalid API key AIzaSyD9876543210abcdefghijklmnopq supplied to Gemini endpoint.";
+    const rawError =
+      "Invalid API key AIzaSyD9876543210abcdefghijklmnopq supplied to Gemini endpoint.";
     const sanitized = sanitizeErrorMessage(rawError);
 
     expect(sanitized).not.toContain("AIzaSyD9876543210abcdefghijklmnopq");
@@ -37,7 +38,8 @@ describe("GeminiStructuredAiProvider and AI Error handling", () => {
   });
 
   it("redacts GitHub tokens and Bearer headers from error messages", () => {
-    const rawError = "GitHub request with token ghp_1234567890abcdefghijklmnopqrstuvwxyz and Bearer secret-token-xyz failed.";
+    const rawError =
+      "GitHub request with token ghp_1234567890abcdefghijklmnopqrstuvwxyz and Bearer secret-token-xyz failed.";
     const sanitized = sanitizeErrorMessage(rawError);
 
     expect(sanitized).not.toContain("ghp_1234567890abcdefghijklmnopqrstuvwxyz");
@@ -165,9 +167,18 @@ describe("GeminiStructuredAiProvider and AI Error handling", () => {
           generateContent: vi.fn((params) => {
             signal = params.config?.abortSignal;
             return new Promise((_, reject) => {
-              signal?.addEventListener("abort", () => {
-                reject(new DOMException("The operation was aborted.", "AbortError"));
-              }, { once: true });
+              signal?.addEventListener(
+                "abort",
+                () => {
+                  reject(
+                    new DOMException(
+                      "The operation was aborted.",
+                      "AbortError",
+                    ),
+                  );
+                },
+                { once: true },
+              );
             });
           }),
         },
@@ -198,9 +209,12 @@ describe("GeminiStructuredAiProvider and AI Error handling", () => {
         defaultTimeoutMs: 10,
         client: {
           models: {
-            generateContent: vi.fn(() => new Promise((_, reject) => {
-              rejectRequest = reject;
-            })),
+            generateContent: vi.fn(
+              () =>
+                new Promise((_, reject) => {
+                  rejectRequest = reject;
+                }),
+            ),
           },
         } as never,
       });
@@ -210,16 +224,61 @@ describe("GeminiStructuredAiProvider and AI Error handling", () => {
         prompt: "test",
         schema: z.object({ result: z.string() }),
       });
-      const rejected = expect(pending).rejects.toMatchObject({ code: "TIMEOUT" });
+      const rejected = expect(pending).rejects.toMatchObject({
+        code: "TIMEOUT",
+      });
       await vi.advanceTimersByTimeAsync(10);
       await rejected;
       rejectRequest?.(new Error("late raw provider failure"));
-      await Promise.resolve();
       await Promise.resolve();
       expect(unhandled).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       process.off("unhandledRejection", unhandled);
     }
+  });
+
+  it("aborts generation promptly when caller AbortSignal triggers without mapping to TIMEOUT", async () => {
+    let signal: AbortSignal | undefined;
+    const abortController = new AbortController();
+
+    const provider = new GeminiStructuredAiProvider({
+      defaultTimeoutMs: 10_000,
+      client: {
+        models: {
+          generateContent: vi.fn((params) => {
+            signal = params.config?.abortSignal;
+            return new Promise((_, reject) => {
+              signal?.addEventListener(
+                "abort",
+                () => {
+                  reject(
+                    new DOMException(
+                      "The operation was aborted.",
+                      "AbortError",
+                    ),
+                  );
+                },
+                { once: true },
+              );
+            });
+          }),
+        },
+      } as never,
+    });
+
+    const pending = provider.generateStructured({
+      taskName: "caller-abort",
+      systemInstruction: "test",
+      prompt: "test",
+      schema: z.object({ result: z.string() }),
+      signal: abortController.signal,
+    });
+
+    // Caller aborts
+    abortController.abort();
+
+    await expect(pending).rejects.toThrow("The operation was aborted.");
+    expect(signal?.aborted).toBe(true);
   });
 });

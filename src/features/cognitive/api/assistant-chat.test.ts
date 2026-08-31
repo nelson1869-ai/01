@@ -837,4 +837,85 @@ describe("M8.7 conversational assistant", () => {
     expect(fallbackCalls).toBe(0); // Fallback was NEVER called!
     expect(runner.calls).toHaveLength(0);
   });
+
+  it("M8.10.1: caller abort never triggers cross-provider fallback", async () => {
+    const store = new MemoryStore();
+    const runner = new FakeToolRunner(verifiedTool);
+    let fallbackCalls = 0;
+    const abortController = new AbortController();
+
+    const mockPrimary: StructuredAiProvider = {
+      providerName: "ollama",
+      defaultModel: "qwen3.5:9b",
+      generateStructured: async () => {
+        abortController.abort();
+        throw new DOMException("The operation was aborted.", "AbortError");
+      },
+    };
+
+    const mockFallback: StructuredAiProvider = {
+      providerName: "gemini",
+      defaultModel: "gemini-3.5-flash-lite",
+      generateStructured: async <T>() => {
+        fallbackCalls++;
+        return {
+          provider: "gemini",
+          model: "gemini-3.5-flash-lite",
+          value: { message: "Fallback response" } as T,
+          latencyMs: 10,
+          finishedAt: NOW,
+        };
+      },
+    };
+
+    const chatService = new AssistantChatService({
+      store,
+      toolRunner: runner,
+      providers: {
+        ollama: mockPrimary,
+        gemini: mockFallback,
+      },
+      now: () => NOW,
+    });
+
+    const pending = chatService.chat(
+      { message: "What is TypeScript?" },
+      { signal: abortController.signal },
+    );
+
+    await expect(pending).rejects.toThrow("The operation was aborted.");
+    expect(fallbackCalls).toBe(0);
+  });
+
+  it("M8.10.1: records real completion timestamp distinct from turn creation timestamp", async () => {
+    const store = new MemoryStore();
+    const runner = new FakeToolRunner(verifiedTool);
+    let tick = 0;
+    const timestamps = [
+      "2026-08-31T00:00:00.000Z", // start / conversation create
+      "2026-08-31T00:00:00.000Z", // context
+      "2026-08-31T00:00:00.000Z", // turn createdAt
+      "2026-08-31T00:00:01.000Z", // stage 1
+      "2026-08-31T00:00:02.000Z", // stage 2
+      "2026-08-31T00:00:03.000Z", // stage 3
+      "2026-08-31T00:00:05.000Z", // completedAt
+    ];
+    const clock = () => timestamps[Math.min(tick++, timestamps.length - 1)];
+
+    const chatService = new AssistantChatService({
+      store,
+      interpreter: new FakeInterpreter(directIntent),
+      composer: new FakeComposer("Answer completed after 5 seconds."),
+      toolRunner: runner,
+      now: clock,
+    });
+
+    const result = await chatService.chat({ message: "What is TypeScript?" });
+    expect(result.status).toBe("COMPLETED");
+
+    const turn = store.turns[0];
+    expect(turn.createdAt).toBe("2026-08-31T00:00:00.000Z");
+    expect(turn.completedAt).toBe("2026-08-31T00:00:05.000Z");
+    expect(turn.completedAt).not.toBe(turn.createdAt);
+  });
 });
