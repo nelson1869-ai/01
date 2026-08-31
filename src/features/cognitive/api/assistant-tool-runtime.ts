@@ -17,6 +17,8 @@ import type { PersistedCandidateAction } from "../persistence/contracts/persiste
 import type { PersistedActionPlan } from "../persistence/contracts/persisted-action-plan";
 import type { PlanStepProposal } from "../orchestration/cognitive-ports";
 
+import type { AssistantProgressStage } from "./assistant-progress";
+
 export interface AssistantToolRunResult {
   readonly status: "VERIFIED" | "FAILED" | "INCONCLUSIVE" | "UNKNOWN" | "RECONCILIATION_REQUIRED" | "DENIED";
   readonly sessionId: string;
@@ -28,7 +30,15 @@ export interface AssistantToolRunResult {
 }
 
 export interface AssistantToolRunnerPort {
-  run(intent: AssistantIntent, sanitizedMessage: string, now: string): Promise<AssistantToolRunResult>;
+  run(
+    intent: AssistantIntent,
+    sanitizedMessage: string,
+    now: string,
+    options?: {
+      readonly onStage?: (stage: AssistantProgressStage) => void | Promise<void>;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<AssistantToolRunResult>;
 }
 
 class AssistantPerception implements PerceptionPort {
@@ -125,10 +135,19 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
     private readonly options: DatabaseAssistantToolRunnerOptions = {},
   ) {}
 
-  async run(intent: AssistantIntent, sanitizedMessage: string, now: string): Promise<AssistantToolRunResult> {
+  async run(
+    intent: AssistantIntent,
+    sanitizedMessage: string,
+    now: string,
+    options?: {
+      readonly onStage?: (stage: AssistantProgressStage) => void | Promise<void>;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<AssistantToolRunResult> {
     if (intent.kind !== "TOOL_REQUIRED" || !intent.action) {
       throw new Error("Assistant tool runner requires a read-only tool intent.");
     }
+    await options?.onStage?.("SAFETY_CHECK");
     const cueId = `cue-${crypto.randomUUID()}`;
     const sessionId = `sess-${crypto.randomUUID()}`;
     const cue: PersistedCueIngress = {
@@ -148,6 +167,7 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
     };
     await ingestCue(this.db, { cue, sessionId, maxRetries: 0 });
 
+    await options?.onStage?.("PLANNING");
     const defaults = this.options.ports ?? createDefaultCognitivePorts({ adapter: this.options.adapter });
     const ports: CognitiveCyclePorts = {
       ...defaults,
@@ -156,6 +176,8 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
       requestBuilder: new AssistantOperationRequestBuilder(intent),
       ...(this.options.verifier ? { verifier: this.options.verifier } : {}),
     };
+
+    await options?.onStage?.("TOOL_EXECUTION");
     const outcome = await executeSessionCycle(this.db, sessionId, {
       taskProfile: "github-readonly-v1",
       ports,
@@ -172,6 +194,9 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
     if (!executionId) {
       return { status: "UNKNOWN", sessionId, cueId, executionId: null, verificationId: null, verifiedFacts: null, reason: "The tool result did not include an execution identifier." };
     }
+
+    await options?.onStage?.("OBSERVING");
+    await options?.onStage?.("VERIFYING");
     const verification = await verificationRepository.findLatestVerificationByExecutionId(this.db, executionId);
     if (!verification) {
       return { status: "UNKNOWN", sessionId, cueId, executionId, verificationId: null, verifiedFacts: null, reason: "No durable result verification was found." };

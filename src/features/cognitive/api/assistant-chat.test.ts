@@ -10,6 +10,10 @@ import type {
   AssistantResponseComposerPort,
   SafeConversationTurn,
 } from "./assistant-ai";
+import type {
+  StructuredAiProvider,
+  StructuredAiRequest,
+} from "../ai/ai-provider-contract";
 import {
   assistantChatRequestSchema,
   MAX_CONTEXT_CHARACTERS,
@@ -383,6 +387,7 @@ describe("M8.7 conversational assistant", () => {
         "decisionSummary",
         "executionId",
         "message",
+        "modelSelection",
         "providerStatus",
         "sessionId",
         "status",
@@ -552,12 +557,9 @@ describe("M8.7 conversational assistant", () => {
     let composerAttempts = 0;
     const failingComposer: AssistantResponseComposerPort = {
       composeDirect: async () => "direct",
-      composeVerified: async (input) => {
+      composeVerified: async () => {
         composerAttempts++;
-        if (composerAttempts === 1) {
-          throw AiProviderError.timeout("gemini", 30_000);
-        }
-        return `Successfully summarized: ${JSON.stringify(input.verifiedFacts)}`;
+        throw AiProviderError.timeout("gemini", 30_000);
       },
     };
 
@@ -578,6 +580,7 @@ describe("M8.7 conversational assistant", () => {
     });
 
     expect(runner.calls).toHaveLength(1); // Tool called exactly ONCE (never redispatched!)
+    expect(composerAttempts).toBeGreaterThanOrEqual(1);
     expect(result.status).toBe("FAILED");
     expect(result.providerStatus).toBe("TIMEOUT");
     expect(result.verification).toBe("UNKNOWN");
@@ -599,5 +602,239 @@ describe("M8.7 conversational assistant", () => {
     expect(serialized).not.toMatch(
       /AIza|ghp_|github_pat_|prompt|raw|modelThoughts/i,
     );
+  });
+
+  it("M8.9: zero-model fast path answers static capability questions immediately with 0 AI calls", async () => {
+    const test = service({});
+    const result = await test.service.chat({
+      message: "Hello AutoDo. What can you do?",
+    });
+
+    expect(result.status).toBe("COMPLETED");
+    expect(result.modelSelection).toEqual({
+      provider: "autodo",
+      model: "deterministic",
+      fallbackUsed: false,
+      taskClass: "STATIC_CAPABILITY",
+      reasonCode: "STATIC_CAPABILITY",
+    });
+    expect(result.telemetry.ai).toHaveLength(0); // 0 AI stages!
+    expect(test.interpreter.calls).toHaveLength(0); // 0 interpreter calls!
+    expect(test.composer.directCalls).toBe(0); // 0 composer calls!
+    expect(test.runner.calls).toHaveLength(0); // 0 tool calls!
+    expect(result.message).toContain("AutoDo AI");
+  });
+
+  it("M8.9: routes simple general chat to local Ollama (qwen3.5:9b)", async () => {
+    const test = service({ intent: directIntent });
+    const result = await test.service.chat({
+      message: "What is TypeScript? Explain it simply.",
+    });
+
+    expect(result.status).toBe("COMPLETED");
+    expect(result.modelSelection).toMatchObject({
+      provider: "ollama",
+      model: "qwen3.5:9b",
+      fallbackUsed: false,
+      taskClass: "SIMPLE_GENERAL",
+      reasonCode: "SIMPLE_LOCAL",
+    });
+  });
+
+  it("M8.9: falls back from Ollama to Gemini Flash-Lite when local provider is unavailable", async () => {
+    const store = new MemoryStore();
+    const runner = new FakeToolRunner(verifiedTool);
+    let ollamaCalls = 0;
+    let geminiCalls = 0;
+
+    const mockOllama: StructuredAiProvider = {
+      providerName: "ollama",
+      defaultModel: "qwen3.5:9b",
+      generateStructured: async () => {
+        ollamaCalls++;
+        throw AiProviderError.providerUnavailable(
+          "ollama",
+          "Connection refused",
+        );
+      },
+    };
+
+    const mockGemini: StructuredAiProvider = {
+      providerName: "gemini",
+      defaultModel: "gemini-3.5-flash-lite",
+      generateStructured: async <T>(req: StructuredAiRequest<T>) => {
+        geminiCalls++;
+        if (req.taskName === "assistant-intent") {
+          return {
+            provider: "gemini",
+            model: req.model ?? "gemini-3.5-flash-lite",
+            value: directIntent as T,
+            latencyMs: 10,
+            finishedAt: NOW,
+          };
+        }
+        return {
+          provider: "gemini",
+          model: req.model ?? "gemini-3.5-flash-lite",
+          value: { message: "TypeScript is typed JavaScript." } as T,
+          latencyMs: 15,
+          finishedAt: NOW,
+        };
+      },
+    };
+
+    const chatService = new AssistantChatService({
+      store,
+      toolRunner: runner,
+      providers: {
+        ollama: mockOllama,
+        gemini: mockGemini,
+      },
+      now: () => NOW,
+    });
+
+    const result = await chatService.chat({ message: "What is TypeScript?" });
+
+    expect(ollamaCalls).toBe(1);
+    expect(geminiCalls).toBeGreaterThanOrEqual(1);
+    expect(result.status).toBe("COMPLETED");
+    expect(result.modelSelection).toMatchObject({
+      provider: "gemini",
+      model: "gemini-3.5-flash-lite",
+      fallbackUsed: true,
+      taskClass: "SIMPLE_GENERAL",
+    });
+    expect(result.message).toBe("TypeScript is typed JavaScript.");
+  });
+
+  it("M8.9 CRITICAL: composer fallback from Gemini to Qwen reuses VERIFIED facts with exactly 1 GitHub tool dispatch", async () => {
+    const store = new MemoryStore();
+    const runner = new FakeToolRunner(verifiedTool);
+    let geminiComposerCalls = 0;
+    let ollamaComposerCalls = 0;
+
+    const mockGemini: StructuredAiProvider = {
+      providerName: "gemini",
+      defaultModel: "gemini-3.5-flash-lite",
+      generateStructured: async <T>(req: StructuredAiRequest<T>) => {
+        if (req.taskName === "assistant-intent") {
+          return {
+            provider: "gemini",
+            model: "gemini-3.5-flash-lite",
+            value: toolIntent as T,
+            latencyMs: 10,
+            finishedAt: NOW,
+          };
+        }
+        if (req.taskName === "assistant-verified-response") {
+          geminiComposerCalls++;
+          throw AiProviderError.timeout("gemini", 30_000);
+        }
+        throw new Error("unexpected task");
+      },
+    };
+
+    const mockOllama: StructuredAiProvider = {
+      providerName: "ollama",
+      defaultModel: "qwen3.5:9b",
+      generateStructured: async <T>(req: StructuredAiRequest<T>) => {
+        if (req.taskName === "assistant-verified-response") {
+          ollamaComposerCalls++;
+          return {
+            provider: "ollama",
+            model: "qwen3.5:9b",
+            value: {
+              message: "Qwen verified response using README facts.",
+            } as T,
+            latencyMs: 25,
+            finishedAt: NOW,
+          };
+        }
+        throw new Error("unexpected task");
+      },
+    };
+
+    const chatService = new AssistantChatService({
+      store,
+      toolRunner: runner,
+      providers: {
+        gemini: mockGemini,
+        ollama: mockOllama,
+      },
+      now: () => NOW,
+    });
+
+    const result = await chatService.chat({
+      message:
+        "Read README.md from my repository and tell me what this project does.",
+    });
+
+    // Verify critical invariants:
+    expect(runner.calls).toHaveLength(1); // Tool called EXACTLY ONCE
+    expect(geminiComposerCalls).toBe(1); // Gemini failed
+    expect(ollamaComposerCalls).toBe(1); // Ollama fallback succeeded
+    expect(result.status).toBe("COMPLETED");
+    expect(result.verification).toBe("VERIFIED");
+    expect(result.sessionId).toBe("sess-1");
+    expect(result.executionId).toBe("exec-1");
+    expect(result.modelSelection).toMatchObject({
+      provider: "ollama",
+      model: "qwen3.5:9b",
+      fallbackUsed: true,
+      taskClass: "CURRENT_EXTERNAL_DATA",
+    });
+    expect(result.message).toBe("Qwen verified response using README facts.");
+  });
+
+  it("M8.9: SAFETY_BLOCKED never triggers cross-provider fallback", async () => {
+    const store = new MemoryStore();
+    const runner = new FakeToolRunner(verifiedTool);
+    let fallbackCalls = 0;
+
+    const mockPrimary: StructuredAiProvider = {
+      providerName: "gemini",
+      defaultModel: "gemini-3.7-flash",
+      generateStructured: async () => {
+        throw AiProviderError.safetyBlocked(
+          "gemini",
+          "Safety policy triggered",
+        );
+      },
+    };
+
+    const mockFallback: StructuredAiProvider = {
+      providerName: "ollama",
+      defaultModel: "qwen3.5:9b",
+      generateStructured: async <T>() => {
+        fallbackCalls++;
+        return {
+          provider: "ollama",
+          model: "qwen3.5:9b",
+          value: { message: "Bypassed response" } as T,
+          latencyMs: 10,
+          finishedAt: NOW,
+        };
+      },
+    };
+
+    const chatService = new AssistantChatService({
+      store,
+      toolRunner: runner,
+      providers: {
+        gemini: mockPrimary,
+        ollama: mockFallback,
+      },
+      now: () => NOW,
+    });
+
+    const result = await chatService.chat({
+      message:
+        "Explain distributed system architecture and consensus algorithm.",
+    });
+
+    expect(result.status).toBe("FAILED");
+    expect(result.providerStatus).toBe("SAFETY_BLOCKED");
+    expect(fallbackCalls).toBe(0); // Fallback was NEVER called!
+    expect(runner.calls).toHaveLength(0);
   });
 });

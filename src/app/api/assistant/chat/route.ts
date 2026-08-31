@@ -4,6 +4,8 @@ import {
   handleRouteError,
 } from "../../../../features/cognitive/api/api-response";
 import { GeminiStructuredAiProvider } from "../../../../features/cognitive/ai/gemini-provider";
+import { OllamaStructuredAiProvider } from "../../../../features/cognitive/ai/ollama-provider";
+import { ReliableStructuredAiProvider } from "../../../../features/cognitive/ai/reliable-provider";
 import {
   GeminiAssistantIntentInterpreter,
   GeminiAssistantResponseComposer,
@@ -35,20 +37,31 @@ export function createAssistantChatPostHandler(
   };
 }
 
-import { ReliableStructuredAiProvider } from "../../../../features/cognitive/ai/reliable-provider";
-
 function createDefaultService(): AssistantChatService {
   const { db } = getDatabaseContext();
-  const rawAi = new GeminiStructuredAiProvider({
-    defaultModel: "gemini-3.7-flash",
+  const rawGemini = new GeminiStructuredAiProvider({
+    defaultModel: "gemini-3.5-flash-lite",
     defaultTimeoutMs: 30_000,
   });
-  const ai = new ReliableStructuredAiProvider(rawAi);
+  const gemini = new ReliableStructuredAiProvider(rawGemini);
+
+  const rawOllama = new OllamaStructuredAiProvider({
+    defaultModel: "qwen3.5:9b",
+    defaultTimeoutMs: 60_000,
+  });
+  const ollama = new ReliableStructuredAiProvider(rawOllama);
+
   return new AssistantChatService({
     store: new DatabaseAssistantConversationStore(db),
-    interpreter: new GeminiAssistantIntentInterpreter(ai),
-    composer: new GeminiAssistantResponseComposer(ai),
     toolRunner: new DatabaseAssistantToolRunner(db),
+    providers: {
+      gemini,
+      ollama,
+    },
+    interpreter: new GeminiAssistantIntentInterpreter(ollama),
+    composer: new GeminiAssistantResponseComposer(ollama),
+    fallbackInterpreter: new GeminiAssistantIntentInterpreter(gemini),
+    fallbackComposer: new GeminiAssistantResponseComposer(gemini),
   });
 }
 

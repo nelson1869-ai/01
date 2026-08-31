@@ -74,11 +74,29 @@ export const requestAiTelemetrySchema = z.strictObject({
   ai: z.array(aiStageTelemetrySchema).readonly(),
 });
 
+export const assistantModelSelectionSchema = z.strictObject({
+  provider: z.enum(["autodo", "ollama", "gemini"]),
+  model: z.enum([
+    "deterministic",
+    "qwen3.5:9b",
+    "gemini-3.5-flash-lite",
+    "gemini-3.7-flash",
+  ]),
+  fallbackUsed: z.boolean(),
+  taskClass: z.string().min(1).max(64),
+  reasonCode: z.string().min(1).max(64),
+});
+
+export type AssistantModelSelection = z.infer<
+  typeof assistantModelSelectionSchema
+>;
+
 export interface AssistantChatResponseData {
   readonly conversationId: string;
   readonly message: string;
   readonly status: z.infer<typeof assistantResponseStatusSchema>;
   readonly providerStatus: AssistantProviderStatus | null;
+  readonly modelSelection: AssistantModelSelection;
   readonly sessionId: string | null;
   readonly executionId: string | null;
   readonly verification: z.infer<typeof assistantVerificationStatusSchema>;

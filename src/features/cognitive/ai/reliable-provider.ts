@@ -149,6 +149,13 @@ export class ReliableStructuredAiProvider implements StructuredAiProvider {
         if (isRetryable) {
           const backoffKey = err.code as keyof typeof DEFAULT_BACKOFF_DELAYS_MS;
           const backoffMs = this.backoffDelaysMs[backoffKey] ?? 500;
+          await request.onRetry?.({
+            stage,
+            provider: this.providerName,
+            model,
+            attempt: attempt + 1,
+            errorCode,
+          });
           await this.sleepFn(backoffMs);
           attempt++;
           continue;

@@ -8,6 +8,14 @@ export interface StructuredAiRequest<T> {
   readonly jsonSchema?: Record<string, unknown>;
   readonly timeoutMs?: number;
   readonly model?: string;
+  readonly signal?: AbortSignal;
+  readonly onRetry?: (info: {
+    stage: string;
+    provider: string;
+    model: string;
+    attempt: number;
+    errorCode: string;
+  }) => void | Promise<void>;
   readonly telemetryCollector?: {
     record(stageTelemetry: {
       stage: string;

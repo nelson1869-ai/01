@@ -518,33 +518,26 @@
       "name": "M8.7 Conversational Assistant",
       "item": [
         {
-          "name": "New Conversation (Direct Answer)",
+          "name": "A. Deterministic Capability Fast Path",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Assistant response is a valid handled outcome\", function () {",
+                  "pm.test(\"Deterministic capability answered with 0 AI calls\", function () {",
                   "    pm.response.to.have.status(200);",
                   "    var json = pm.response.json();",
-                  "    var allowedStatuses = [\"COMPLETED\", \"CLARIFICATION_REQUIRED\", \"DENIED\", \"FAILED\", \"UNVERIFIED\"];",
-                  "    var safeProviderStatuses = [\"READY\", \"MISSING_CREDENTIAL\", \"AUTHENTICATION_FAILED\", \"RATE_LIMITED\", \"TIMEOUT\", \"PROVIDER_UNAVAILABLE\", \"SAFETY_BLOCKED\", \"INVALID_STRUCTURED_OUTPUT\", \"RESPONSE_TOO_LARGE\", \"UNKNOWN_PROVIDER_FAILURE\"];",
-                  "    pm.expect(json).to.have.property(\"data\");",
-                  "    pm.expect(json.data).to.have.property(\"status\");",
-                  "    pm.expect(allowedStatuses).to.include(json.data.status);",
-                  "    pm.expect(json.data.conversationId).to.match(/^conv-/);",
-                  "    pm.expect(json.data.message).to.be.a(\"string\");",
-                  "    pm.expect(json.data).to.have.property(\"telemetry\");",
-                  "    pm.expect(json.data.telemetry).to.have.property(\"totalDurationMs\");",
-                  "    pm.expect(json.data.telemetry).to.have.property(\"ai\");",
-                  "    if (json.data.status === \"FAILED\") {",
-                  "        pm.expect(json.data).to.have.property(\"providerStatus\");",
-                  "        pm.expect(safeProviderStatuses).to.include(json.data.providerStatus);",
-                  "    }",
-                  "    if (json.data.status === \"COMPLETED\") {",
-                  "        pm.expect(json.data.message.trim().length).to.be.above(0);",
-                  "    }",
+                  "    pm.expect(json.data.status).to.eql(\"COMPLETED\");",
+                  "    pm.expect(json.data.modelSelection).to.eql({",
+                  "        provider: \"autodo\",",
+                  "        model: \"deterministic\",",
+                  "        fallbackUsed: false,",
+                  "        taskClass: \"STATIC_CAPABILITY\",",
+                  "        reasonCode: \"STATIC_CAPABILITY\"",
+                  "    });",
+                  "    pm.expect(json.data.telemetry.ai).to.have.lengthOf(0);",
+                  "    pm.expect(json.data.message).to.include(\"AutoDo AI\");",
                   "});",
                   "var json = pm.response.json();",
                   "if (json.data && json.data.conversationId) pm.environment.set(\"conversationId\", json.data.conversationId);"
@@ -565,23 +558,25 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "assistant", "chat"]
             },
-            "description": "Starts a durable bounded conversation with a direct answer and returns telemetry."
+            "description": "Zero-model fast path for static capability greetings."
           },
           "response": []
         },
         {
-          "name": "Continue Conversation",
+          "name": "B. Local Qwen General Chat",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Conversation continues with the same identifier\", function () {",
+                  "pm.test(\"Simple chat is routed to local Qwen or fallback\", function () {",
                   "    pm.response.to.have.status(200);",
                   "    var json = pm.response.json();",
-                  "    pm.expect(json.data.conversationId).to.eql(pm.environment.get(\"conversationId\"));",
-                  "    pm.expect(json.data).to.have.property(\"telemetry\");",
+                  "    pm.expect(json.data.status).to.eql(\"COMPLETED\");",
+                  "    pm.expect(json.data).to.have.property(\"modelSelection\");",
+                  "    pm.expect([\"ollama\", \"gemini\"]).to.include(json.data.modelSelection.provider);",
+                  "    pm.expect(json.data.message.trim().length).to.be.above(0);",
                   "});"
                 ]
               }
@@ -592,7 +587,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"What should I work on next?\"\n}",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"What is TypeScript? Explain it simply.\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -600,12 +595,12 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "assistant", "chat"]
             },
-            "description": "Uses bounded durable context from the preceding verified turn."
+            "description": "General concept explanation routed local-first."
           },
           "response": []
         },
         {
-          "name": "Tool-backed Question",
+          "name": "C. Tool-backed Repository Question",
           "event": [
             {
               "listen": "test",
@@ -619,6 +614,7 @@
                   "    pm.expect(json.data.verification).to.eql(\"VERIFIED\");",
                   "    pm.expect(json.data.sessionId).to.match(/^sess-/);",
                   "    pm.expect(json.data.executionId).to.be.a(\"string\");",
+                  "    pm.expect(json.data).to.have.property(\"modelSelection\");",
                   "    pm.expect(json.data).to.have.property(\"telemetry\");",
                   "    pm.expect(json.data.telemetry.ai.length).to.be.above(0);",
                   "});"
@@ -644,7 +640,43 @@
           "response": []
         },
         {
-          "name": "Safety Test",
+          "name": "D. Cloud Complex Reasoning Task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Complex reasoning routed to strong model\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data.status).to.eql(\"COMPLETED\");",
+                  "    pm.expect(json.data).to.have.property(\"modelSelection\");",
+                  "    pm.expect(json.data.modelSelection.taskClass).to.eql(\"COMPLEX_REASONING\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Explain the microservice architecture and deadlock analysis strategy for our distributed system.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat"]
+            },
+            "description": "Routes complex architectural reasoning to strong cloud model."
+          },
+          "response": []
+        },
+        {
+          "name": "E. Safety Denial Test",
           "event": [
             {
               "listen": "test",

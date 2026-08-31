@@ -276,4 +276,33 @@ describe("M8.7 assistant durable pipeline (fake Gemini/GitHub networking)", () =
       );
     expect(turns).toHaveLength(1); // Exactly 1 durable turn persisted!
   });
+
+  it("M8.9: executes static capability fast path in live database with 0 AI stages and valid modelSelection", async () => {
+    const adapter = new FakeGitHubAdapter();
+    const composer = new Composer();
+    const service = makeService(adapter, composer);
+
+    const response = await service.chat({
+      message: "Hello AutoDo. What can you do?",
+    });
+
+    expect(response.status).toBe("COMPLETED");
+    expect(response.modelSelection).toEqual({
+      provider: "autodo",
+      model: "deterministic",
+      fallbackUsed: false,
+      taskClass: "STATIC_CAPABILITY",
+      reasonCode: "STATIC_CAPABILITY",
+    });
+    expect(response.telemetry.ai).toHaveLength(0);
+    expect(adapter.dispatchCount).toBe(0);
+
+    const turns =
+      await assistantConversationRepository.findAllTurnsForConversation(
+        context.db,
+        response.conversationId,
+      );
+    expect(turns).toHaveLength(1);
+    expect(turns[0].status).toBe("COMPLETED");
+  });
 });
