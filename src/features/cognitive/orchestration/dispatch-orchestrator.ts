@@ -1,6 +1,7 @@
 import type {
   DispatchInput,
   DispatchResult,
+  JSONObject,
   OperationAdapter,
 } from "../adapters/adapter-contract";
 import { normalizeAdapterError } from "../adapters/adapter-errors";
@@ -165,7 +166,10 @@ export async function dispatchAuthorizedOperation<
         expectedOperationRowVersion: rowVersionForOutcome,
         outcome: "SUCCEEDED",
         providerOperationId: dispatchResult.providerOperationId ?? null,
-        resultMetadata: dispatchResult.metadata ?? null,
+        resultMetadata:
+          ((dispatchResult.result ?? dispatchResult.metadata ?? null) as
+            | JSONObject
+            | null) ?? null,
         finishedAt: dispatchResult.finishedAt,
       });
       outcomeOperation = outcome.operation;

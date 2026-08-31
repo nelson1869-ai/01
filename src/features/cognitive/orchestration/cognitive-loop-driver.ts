@@ -1,4 +1,7 @@
-import type { OperationAdapter } from "../adapters/adapter-contract";
+import type {
+  JSONObject,
+  OperationAdapter,
+} from "../adapters/adapter-contract";
 import type { AllowedExecutionSafetyState } from "../domain/execution-safety";
 import type { CognitivePhase } from "../domain/types";
 import type { ResultVerifier } from "../domain/verifier-contract";
@@ -56,6 +59,10 @@ import {
 } from "./recovery-orchestrator";
 import { applyVerificationReward } from "./reward-orchestrator";
 import { verifyExecutionResult } from "./verification-orchestrator";
+import {
+  DefaultOperationRequestBuilder,
+  type OperationRequestBuilderPort,
+} from "./operation-request-builder";
 
 export type CognitiveCycleResult =
   | {
@@ -120,6 +127,7 @@ export interface CognitiveCyclePorts {
   readonly verifier: ResultVerifier;
   readonly adapter: OperationAdapter;
   readonly memoryProposalStrategy?: MemoryProposalStrategyPort;
+  readonly requestBuilder?: OperationRequestBuilderPort;
 }
 
 export interface AdvanceCycleOptions {
@@ -274,6 +282,17 @@ export async function advanceCognitiveCycle(
 
     case "GENERATE_CANDIDATES": {
       const cue = await getRequiredCue(db, session);
+
+      // Replay / restart optimization: If candidates already exist for this cue, reuse them without calling generator
+      const existingCandidates = await candidateRepository.findCandidatesByCueId(
+        db,
+        cue.cueId,
+      );
+      if (existingCandidates.length > 0) {
+        const updated = await transitionSessionPhase(db, session, "SCORE", now);
+        return { isBoundary: false, nextSession: updated };
+      }
+
       const perception = await ports.perception.perceive(cue);
       const context = await assembleCognitiveContext(db, {
         session,
@@ -729,6 +748,15 @@ export async function advanceCognitiveCycle(
         );
       }
 
+      const candidate = await getRequiredCandidate(db, session);
+      const requestBuilder =
+        ports.requestBuilder ?? new DefaultOperationRequestBuilder();
+      const builtRequest = requestBuilder.buildOperationRequest(
+        candidate,
+        plan,
+        firstStep,
+      );
+
       // Start execution and first step if PENDING
       if (existingExec.status === "PENDING") {
         await startAuthorizedExecution(db, auth, {
@@ -770,10 +798,10 @@ export async function advanceCognitiveCycle(
           operationGeneration: 1,
           expectedStepRowVersion: 1,
           expectedSafetyGeneration: auth.generation,
-          operationKind: options.skillKey,
-          requestFingerprint: `sha256:op-req:${operationId}`,
-          providerScope: "test-provider",
-          providerIdempotencyKey: `prov-idemp:${operationId}`,
+          operationKind: builtRequest.operationKind,
+          requestFingerprint: builtRequest.requestFingerprint,
+          providerScope: builtRequest.providerScope,
+          providerIdempotencyKey: builtRequest.providerIdempotencyKey,
           createdAt: now,
         });
       }
@@ -848,6 +876,15 @@ export async function advanceCognitiveCycle(
         };
       }
 
+      const candidate = await getRequiredCandidate(db, session);
+      const requestBuilder =
+        ports.requestBuilder ?? new DefaultOperationRequestBuilder();
+      const builtRequest = requestBuilder.buildOperationRequest(
+        candidate,
+        plan,
+        firstStep,
+      );
+
       // Dispatch operation OUTSIDE db transaction
       const dispatchResult = await dispatchAuthorizedOperation(
         db,
@@ -866,7 +903,7 @@ export async function advanceCognitiveCycle(
           expectedSafetyGeneration: auth.generation,
           workerId: null,
           startedAt: now,
-          request: { skillKey: options.skillKey, payload: {} },
+          request: builtRequest.request as JSONObject,
         },
       );
 
@@ -894,7 +931,59 @@ export async function advanceCognitiveCycle(
       const plan = await getRequiredPlan(db, session);
       const executionId = `exec:${session.sessionId}:${plan.planId}`;
       const firstStep = plan.steps[0];
+      const operationId = `op:${executionId}:${firstStep.stepId}`;
+      const attemptId = `att:${operationId}:1`;
       const observationId = `obs:${executionId}:${firstStep.stepId}`;
+
+      const op = await executionOperationRepository.findOperationById(
+        db,
+        operationId,
+      );
+      if (!op) {
+        throw PersistenceError.notFound(
+          `Operation "${operationId}" not found in OBSERVE phase.`,
+        );
+      }
+
+      const attempt = await executionOperationRepository.findAttemptById(
+        db,
+        attemptId,
+      );
+
+      const isSuccess = op.status === "SUCCEEDED";
+      const durableResult = (attempt?.providerMetadata ?? null) as JSONObject | null;
+
+      // Invariant: If operation was marked SUCCEEDED but durable result payload is missing/empty,
+      // fail closed / do NOT invent synthetic success content.
+      if (isSuccess && (!durableResult || Object.keys(durableResult).length === 0)) {
+        return {
+          isBoundary: true,
+          cycleResult: {
+            status: "FAILED",
+            sessionId,
+            executionId,
+            reason: `Operation "${operationId}" is marked SUCCEEDED but missing durable provider result payload.`,
+          },
+          nextSession: session,
+        };
+      }
+
+      const observationData: JSONObject = isSuccess
+        ? {
+            outcome: "CONFIRMED_SUCCESS",
+            operationKind: op.operationKind,
+            providerScope: op.providerScope ?? "github-rest",
+            providerOperationId: op.providerOperationId,
+            result: durableResult ?? {},
+            finishedAt: attempt?.finishedAt ?? op.updatedAt,
+          }
+        : {
+            outcome: "CONFIRMED_FAILURE",
+            operationKind: op.operationKind,
+            errorSummary:
+              attempt?.errorSummary ?? op.uncertaintyReason ?? "Operation did not confirm success",
+            finishedAt: attempt?.finishedAt ?? op.updatedAt,
+          };
 
       await recordObservation(db, {
         commandIdempotencyKey: `ingest-obs:${observationId}`,
@@ -903,11 +992,8 @@ export async function advanceCognitiveCycle(
         stepId: firstStep.stepId,
         source: "provider-dispatch",
         sourceEventId: `event-${observationId}`,
-        summary: `Dispatch observation for ${options.skillKey}`,
-        data: {
-          outcome: "CONFIRMED_SUCCESS",
-          executedSkill: options.skillKey,
-        },
+        summary: `Dispatch observation for ${op.operationKind}`,
+        data: observationData,
         observedAt: now,
         payloadExpiresAt: null,
       });
@@ -916,10 +1002,12 @@ export async function advanceCognitiveCycle(
         evidenceId: `ev-${observationId}`,
         source: "verification",
         sourceId: observationId,
-        claim: `Execution result verified for ${options.skillKey}`,
+        claim: isSuccess
+          ? `Execution result confirmed for ${op.operationKind}`
+          : `Execution result failed for ${op.operationKind}`,
         observedAt: now,
         createdAt: now,
-        providerMetadata: { executionId },
+        providerMetadata: { executionId, operationId },
       };
       await evidenceRepository.appendEvidence(db, evidence);
 
@@ -1280,6 +1368,27 @@ async function getRequiredPlan(
     );
   }
   return plan;
+}
+
+async function getRequiredCandidate(
+  db: DatabaseClient,
+  session: PersistedCognitiveSession,
+): Promise<PersistedCandidateAction> {
+  if (!session.currentCandidateId) {
+    throw PersistenceError.invalidPersistedState(
+      `Session "${session.sessionId}" has no currentCandidateId.`,
+    );
+  }
+  const candidate = await candidateRepository.findCandidateById(
+    db,
+    session.currentCandidateId,
+  );
+  if (!candidate) {
+    throw PersistenceError.notFound(
+      `Candidate "${session.currentCandidateId}" not found.`,
+    );
+  }
+  return candidate;
 }
 
 async function transitionSessionPhase(
