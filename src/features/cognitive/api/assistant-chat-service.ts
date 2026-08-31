@@ -4,10 +4,11 @@ import type {
   PersistedAssistantConversation,
   PersistedAssistantTurn,
 } from "../persistence/contracts/assistant-conversation";
+import { AiProviderError, type AiErrorCode } from "../ai/ai-errors";
 import { assistantConversationRepository } from "../persistence/postgres/repositories/assistant-conversation-repository";
 import type { DatabaseClient } from "../persistence/postgres/transactions/transaction-executor";
 import type { AssistantIntentInterpreterPort, AssistantResponseComposerPort, SafeConversationTurn } from "./assistant-ai";
-import type { AssistantChatRequest, AssistantChatResponseData } from "./assistant-chat-contracts";
+import type { AssistantChatRequest, AssistantChatResponseData, AssistantProviderStatus } from "./assistant-chat-contracts";
 import { MAX_CONTEXT_CHARACTERS, MAX_CONTEXT_TURNS } from "./assistant-chat-contracts";
 import { deterministicDenialReason, redactAssistantMessage } from "./assistant-security";
 import type { AssistantToolRunnerPort } from "./assistant-tool-runtime";
@@ -75,6 +76,31 @@ function boundedContext(turns: readonly PersistedAssistantTurn[]): SafeConversat
   return selected.reverse();
 }
 
+const PROVIDER_FAILURE_SUMMARIES: Readonly<Record<AiErrorCode, string>> = {
+  MISSING_CREDENTIAL: "The Gemini provider is not configured with a credential.",
+  AUTHENTICATION_FAILED: "The Gemini provider could not authenticate.",
+  RATE_LIMITED: "The Gemini provider is currently rate limited.",
+  TIMEOUT: "The Gemini provider timed out.",
+  PROVIDER_UNAVAILABLE: "The Gemini provider is currently unavailable.",
+  SAFETY_BLOCKED: "The Gemini provider blocked the request through its safety controls.",
+  INVALID_STRUCTURED_OUTPUT: "The Gemini provider returned an invalid structured response.",
+  RESPONSE_TOO_LARGE: "The Gemini provider response exceeded the safe size limit.",
+  UNKNOWN_PROVIDER_FAILURE: "The assistant encountered an unknown provider failure.",
+};
+
+function safeProviderFailure(error: unknown): {
+  readonly providerStatus: AssistantProviderStatus;
+  readonly summary: string;
+} {
+  const code = error instanceof AiProviderError
+    ? error.code
+    : "UNKNOWN_PROVIDER_FAILURE";
+  return {
+    providerStatus: code,
+    summary: PROVIDER_FAILURE_SUMMARIES[code],
+  };
+}
+
 export class AssistantChatService {
   constructor(private readonly dependencies: {
     readonly store: AssistantConversationStorePort;
@@ -99,12 +125,15 @@ export class AssistantChatService {
       userMessage: sanitizedMessage,
       createdAt: now,
     });
+    let externalActionAttempted = false;
+    let completedTool: Awaited<ReturnType<AssistantToolRunnerPort["run"]>> | null = null;
 
     const finish = async (input: {
       kind: AssistantTurnKind;
       status: Exclude<AssistantTurnStatus, "PROCESSING">;
       message: string;
       verification: AssistantChatResponseData["verification"];
+      providerStatus?: AssistantProviderStatus | null;
       decisionSummary: readonly string[];
       cueId?: string | null;
       sessionId?: string | null;
@@ -128,6 +157,7 @@ export class AssistantChatService {
         conversationId,
         message: safeMessage,
         status: input.status === "CLARIFICATION_REQUIRED" ? "CLARIFICATION_REQUIRED" : input.status,
+        providerStatus: input.providerStatus ?? null,
         sessionId: input.sessionId ?? null,
         executionId: input.executionId ?? null,
         verification: input.verification,
@@ -159,7 +189,9 @@ export class AssistantChatService {
         return finish({ kind: "DIRECT_ANSWER", status: "COMPLETED", message, verification: "NOT_REQUIRED", decisionSummary: ["The request does not require current external information.", "No external action was performed."] });
       }
 
+      externalActionAttempted = true;
       const tool = await this.dependencies.toolRunner.run(intent, sanitizedMessage, now);
+      completedTool = tool;
       const links = { cueId: tool.cueId, sessionId: tool.sessionId, executionId: tool.executionId, verificationId: tool.verificationId };
       if (tool.status === "VERIFIED" && tool.verifiedFacts) {
         const message = await this.dependencies.composer.composeVerified({ message: sanitizedMessage, context, verifiedFacts: tool.verifiedFacts });
@@ -170,8 +202,25 @@ export class AssistantChatService {
       }
       const verification = tool.status === "RECONCILIATION_REQUIRED" ? "RECONCILIATION_REQUIRED" : tool.status;
       return finish({ ...links, kind: "TOOL_REQUIRED", status: "UNVERIFIED", message: "I couldn’t verify that result yet.", verification, decisionSummary: ["The tool result was not verified.", "No unverified provider content was presented as fact."] });
-    } catch {
-      return finish({ kind: "DIRECT_ANSWER", status: "FAILED", message: "I couldn’t complete that request safely.", verification: "UNKNOWN", decisionSummary: ["The assistant pipeline failed closed.", "No unverified result was presented as fact."] });
+    } catch (error) {
+      const failure = safeProviderFailure(error);
+      return finish({
+        kind: "DIRECT_ANSWER",
+        status: "FAILED",
+        message: "I couldn’t complete that request safely.",
+        providerStatus: failure.providerStatus,
+        verification: "UNKNOWN",
+        cueId: completedTool?.cueId,
+        sessionId: completedTool?.sessionId,
+        executionId: completedTool?.executionId,
+        verificationId: completedTool?.verificationId,
+        decisionSummary: [
+          failure.summary,
+          externalActionAttempted
+            ? "No unverified provider result was presented as fact."
+            : "No external action was performed.",
+        ],
+      });
     }
   }
 }

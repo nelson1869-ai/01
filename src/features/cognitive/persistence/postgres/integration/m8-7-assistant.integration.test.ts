@@ -10,6 +10,7 @@ import { policyRepository } from "../repositories/policy-repository";
 import { sessionRepository } from "../repositories/session-repository";
 import type { PostgresDatabaseContext } from "../client";
 import { cleanIntegrationTestTables, setupIntegrationTestDatabase } from "../testing/integration-harness";
+import { AiProviderError } from "../../../ai/ai-errors";
 
 const NOW = "2026-08-31T06:00:00.000Z";
 
@@ -54,10 +55,15 @@ describe("M8.7 assistant durable pipeline (fake Gemini/GitHub networking)", () =
   beforeEach(async () => { await cleanIntegrationTestTables(context.db); });
   afterAll(async () => { await context?.close(); });
 
-  function makeService(adapter: FakeGitHubAdapter, composer: Composer, verifier?: ResultVerifier) {
+  function makeService(
+    adapter: FakeGitHubAdapter,
+    composer: Composer,
+    verifier?: ResultVerifier,
+    interpreter: AssistantIntentInterpreterPort = new ToolIntent(),
+  ) {
     return new AssistantChatService({
       store: new DatabaseAssistantConversationStore(context.db),
-      interpreter: new ToolIntent(),
+      interpreter,
       composer,
       toolRunner: new DatabaseAssistantToolRunner(context.db, { adapter, verifier }),
       now: () => NOW,
@@ -101,5 +107,31 @@ describe("M8.7 assistant durable pipeline (fake Gemini/GitHub networking)", () =
     expect(adapter.dispatchCount).toBe(0);
     expect(response.sessionId).toBeNull();
     expect(response.message).toContain("read-only GitHub policy");
+  });
+
+  it("persists a safe TIMEOUT turn without creating a cue/session or dispatching GitHub", async () => {
+    const adapter = new FakeGitHubAdapter();
+    const composer = new Composer();
+    const interpreter: AssistantIntentInterpreterPort = {
+      async interpret() {
+        throw AiProviderError.timeout("gemini", 30_000);
+      },
+    };
+    const response = await makeService(adapter, composer, undefined, interpreter).chat({
+      message: "Check my repository and tell me what this project does.",
+    });
+    expect(response).toMatchObject({
+      status: "FAILED",
+      providerStatus: "TIMEOUT",
+      sessionId: null,
+      executionId: null,
+    });
+    expect(adapter.dispatchCount).toBe(0);
+    const turns = await assistantConversationRepository.findAllTurnsForConversation(
+      context.db,
+      response.conversationId,
+    );
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ cueId: null, sessionId: null, executionId: null });
   });
 });

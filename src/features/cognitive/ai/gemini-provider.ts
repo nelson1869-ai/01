@@ -10,20 +10,23 @@ export interface GeminiProviderOptions {
   readonly apiKey?: string;
   readonly defaultModel?: string;
   readonly defaultTimeoutMs?: number;
+  readonly client?: Pick<GoogleGenAI, "models">;
 }
 
 export class GeminiStructuredAiProvider implements StructuredAiProvider {
   readonly providerName = "gemini";
   readonly defaultModel: string;
   private readonly defaultTimeoutMs: number;
-  private readonly client: GoogleGenAI | null;
+  private readonly client: Pick<GoogleGenAI, "models"> | null;
 
   constructor(options?: GeminiProviderOptions) {
     this.defaultModel = options?.defaultModel ?? "gemini-3.7-flash";
     this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30_000;
 
     const apiKey = options?.apiKey ?? process.env.GEMINI_API_KEY;
-    if (apiKey) {
+    if (options?.client) {
+      this.client = options.client;
+    } else if (apiKey) {
       this.client = new GoogleGenAI({ apiKey });
     } else {
       this.client = null;
@@ -40,12 +43,15 @@ export class GeminiStructuredAiProvider implements StructuredAiProvider {
     const modelName = request.model ?? this.defaultModel;
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
     const startTime = Date.now();
+    const abortController = new AbortController();
+    let timedOut = false;
 
     const generatePromise = (async () => {
       try {
         const config: Record<string, unknown> = {
           systemInstruction: request.systemInstruction,
           responseMimeType: "application/json",
+          abortSignal: abortController.signal,
         };
 
         if (request.jsonSchema) {
@@ -60,13 +66,21 @@ export class GeminiStructuredAiProvider implements StructuredAiProvider {
 
         return response;
       } catch (err: unknown) {
+        if (timedOut || abortController.signal.aborted) {
+          throw AiProviderError.timeout(this.providerName, timeoutMs);
+        }
         throw this.mapGeminiError(err);
       }
     })();
 
+    // Prevent unhandled promise rejection if timeoutPromise rejects first
+    generatePromise.catch(() => {});
+
     let timeoutHandle: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        abortController.abort();
         reject(AiProviderError.timeout(this.providerName, timeoutMs));
       }, timeoutMs);
     });
@@ -88,7 +102,8 @@ export class GeminiStructuredAiProvider implements StructuredAiProvider {
       try {
         parsedJson = JSON.parse(rawText);
       } catch (parseError: unknown) {
-        const msg = parseError instanceof Error ? parseError.message : String(parseError);
+        const msg =
+          parseError instanceof Error ? parseError.message : String(parseError);
         throw AiProviderError.invalidStructuredOutput(
           this.providerName,
           `Failed to parse response JSON: ${msg}`,
@@ -156,7 +171,11 @@ export class GeminiStructuredAiProvider implements StructuredAiProvider {
       return AiProviderError.rateLimited(this.providerName);
     }
 
-    if (lower.includes("safety") || lower.includes("blocked") || lower.includes("harm")) {
+    if (
+      lower.includes("safety") ||
+      lower.includes("blocked") ||
+      lower.includes("harm")
+    ) {
       return AiProviderError.safetyBlocked(this.providerName, message);
     }
 

@@ -6,6 +6,7 @@ import { assistantChatRequestSchema, MAX_CONTEXT_CHARACTERS, MAX_CONTEXT_TURNS }
 import { AssistantChatService, type AssistantConversationStorePort } from "./assistant-chat-service";
 import type { AssistantToolRunnerPort, AssistantToolRunResult } from "./assistant-tool-runtime";
 import { createAssistantChatPostHandler } from "../../../app/api/assistant/chat/route";
+import { AiProviderError, type AiErrorCode } from "../ai/ai-errors";
 
 const NOW = "2026-08-31T00:00:00.000Z";
 
@@ -63,9 +64,10 @@ class MemoryStore implements AssistantConversationStorePort {
 
 class FakeInterpreter implements AssistantIntentInterpreterPort {
   calls: Array<{ message: string; context: readonly SafeConversationTurn[] }> = [];
-  constructor(private readonly value: AssistantIntent) {}
+  constructor(private readonly value: AssistantIntent, private readonly error?: Error) {}
   interpret(message: string, context: readonly SafeConversationTurn[]) {
     this.calls.push({ message, context });
+    if (this.error) throw this.error;
     return Promise.resolve(this.value);
   }
 }
@@ -88,9 +90,9 @@ const directIntent: AssistantIntent = { kind: "DIRECT_ANSWER", action: null, pat
 const toolIntent: AssistantIntent = { kind: "TOOL_REQUIRED", action: "github.contents.read", path: "README.md", issueNumber: null, pullNumber: null, response: null, goal: "Read README.md" };
 const verifiedTool: AssistantToolRunResult = { status: "VERIFIED", cueId: "cue-1", sessionId: "sess-1", executionId: "exec-1", verificationId: "ver-1", verifiedFacts: { path: "README.md", content: "AutoDo" }, reason: "Verified" };
 
-function service(input: { store?: MemoryStore; intent?: AssistantIntent; composer?: FakeComposer; tool?: AssistantToolRunResult }) {
+function service(input: { store?: MemoryStore; intent?: AssistantIntent; interpreterError?: Error; composer?: FakeComposer; tool?: AssistantToolRunResult }) {
   const store = input.store ?? new MemoryStore();
-  const interpreter = new FakeInterpreter(input.intent ?? directIntent);
+  const interpreter = new FakeInterpreter(input.intent ?? directIntent, input.interpreterError);
   const composer = input.composer ?? new FakeComposer();
   const runner = new FakeToolRunner(input.tool ?? verifiedTool);
   return { store, interpreter, composer, runner, service: new AssistantChatService({ store, interpreter, composer, toolRunner: runner, now: () => NOW }) };
@@ -109,6 +111,7 @@ describe("M8.7 conversational assistant", () => {
     const result = await test.service.chat({ message: "What is a pull request?" });
     expect(result.conversationId).toMatch(/^conv-/);
     expect(result).toMatchObject({ status: "COMPLETED", verification: "NOT_REQUIRED", sessionId: null, executionId: null });
+    expect(result.providerStatus).toBeNull();
     expect(test.runner.calls).toHaveLength(0);
     expect(test.composer.directCalls).toBe(1);
   });
@@ -133,6 +136,7 @@ describe("M8.7 conversational assistant", () => {
     expect(test.runner.calls[0].action).toBe("github.contents.read");
     expect(test.composer.verifiedCalls).toBe(1);
     expect(result).toMatchObject({ status: "COMPLETED", verification: "VERIFIED", sessionId: "sess-1", executionId: "exec-1" });
+    expect(result.providerStatus).toBeNull();
   });
 
   it("does not synthesize or claim success for failed verification", async () => {
@@ -191,7 +195,7 @@ describe("M8.7 conversational assistant", () => {
     const composer = new FakeComposer("Safe answer");
     const test = service({ composer });
     const result = await test.service.chat({ message: "Explain pull requests." });
-    expect(Object.keys(result).sort()).toEqual(["conversationId", "decisionSummary", "executionId", "message", "sessionId", "status", "verification"].sort());
+    expect(Object.keys(result).sort()).toEqual(["conversationId", "decisionSummary", "executionId", "message", "providerStatus", "sessionId", "status", "verification"].sort());
     expect(JSON.stringify(result)).not.toMatch(/raw|chainOfThought|scratchpad|hiddenReasoning|thoughtSignature|runtimeAuthorization/i);
   });
 
@@ -210,5 +214,60 @@ describe("M8.7 conversational assistant", () => {
     expect(invalidJson.status).toBe(400);
     expect(unknown.status).toBe(400);
     expect(calls).toBe(0);
+  });
+
+  const providerFailures: ReadonlyArray<{
+    code: AiErrorCode;
+    error: Error;
+    expectedSummary: string;
+  }> = [
+    { code: "TIMEOUT", error: AiProviderError.timeout("gemini", 30_000), expectedSummary: "The Gemini provider timed out." },
+    { code: "RATE_LIMITED", error: AiProviderError.rateLimited("gemini"), expectedSummary: "The Gemini provider is currently rate limited." },
+    { code: "AUTHENTICATION_FAILED", error: AiProviderError.authenticationFailed("gemini"), expectedSummary: "The Gemini provider could not authenticate." },
+    { code: "MISSING_CREDENTIAL", error: AiProviderError.missingCredential("gemini"), expectedSummary: "The Gemini provider is not configured with a credential." },
+    { code: "PROVIDER_UNAVAILABLE", error: AiProviderError.providerUnavailable("gemini"), expectedSummary: "The Gemini provider is currently unavailable." },
+    { code: "SAFETY_BLOCKED", error: AiProviderError.safetyBlocked("gemini"), expectedSummary: "The Gemini provider blocked the request through its safety controls." },
+    { code: "INVALID_STRUCTURED_OUTPUT", error: AiProviderError.invalidStructuredOutput("gemini", "bad output"), expectedSummary: "The Gemini provider returned an invalid structured response." },
+    { code: "RESPONSE_TOO_LARGE", error: new AiProviderError("oversized", { code: "RESPONSE_TOO_LARGE", provider: "gemini" }), expectedSummary: "The Gemini provider response exceeded the safe size limit." },
+  ];
+
+  it.each(providerFailures)("returns safe normalized provider status $code without starting tools", async ({ code, error, expectedSummary }) => {
+    const test = service({ interpreterError: error });
+    const result = await test.service.chat({ message: "Check my repository." });
+    expect(result).toMatchObject({
+      status: "FAILED",
+      providerStatus: code,
+      sessionId: null,
+      executionId: null,
+      verification: "UNKNOWN",
+    });
+    expect(result.decisionSummary).toEqual([expectedSummary, "No external action was performed."]);
+    expect(test.runner.calls).toHaveLength(0);
+    expect(test.store.turns).toHaveLength(1);
+  });
+
+  it("maps an unknown non-provider exception without exposing raw errors or secrets", async () => {
+    const raw = "SDK exploded with AIzaSySecretKey123456789012345 and ghp_abcdefghijklmnopqrstuvwxyz123456";
+    const test = service({ interpreterError: new Error(raw) });
+    const result = await test.service.chat({ message: "Check my repository." });
+    const serialized = JSON.stringify(result);
+    expect(result.providerStatus).toBe("UNKNOWN_PROVIDER_FAILURE");
+    expect(serialized).not.toContain(raw);
+    expect(serialized).not.toMatch(/AIzaSySecretKey|ghp_abcdefghijklmnopqrstuvwxyz/);
+    expect(test.runner.calls).toHaveLength(0);
+  });
+
+  it("returns a handled HTTP 200 TIMEOUT result with zero tool calls", async () => {
+    const test = service({ interpreterError: AiProviderError.timeout("gemini", 30_000) });
+    const handler = createAssistantChatPostHandler(test.service);
+    const response = await handler(new Request("http://localhost/api/assistant/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: "Check my repository and tell me what this project does." }),
+    }));
+    const json = await response.json();
+    expect(response.status).toBe(200);
+    expect(json.data).toMatchObject({ status: "FAILED", providerStatus: "TIMEOUT", sessionId: null, executionId: null });
+    expect(test.runner.calls).toHaveLength(0);
   });
 });

@@ -33,10 +33,26 @@ export const assistantVerificationStatusSchema = z.enum([
   "RECONCILIATION_REQUIRED",
 ]);
 
+export const assistantProviderStatusSchema = z.enum([
+  "READY",
+  "MISSING_CREDENTIAL",
+  "AUTHENTICATION_FAILED",
+  "RATE_LIMITED",
+  "TIMEOUT",
+  "PROVIDER_UNAVAILABLE",
+  "SAFETY_BLOCKED",
+  "INVALID_STRUCTURED_OUTPUT",
+  "RESPONSE_TOO_LARGE",
+  "UNKNOWN_PROVIDER_FAILURE",
+]);
+
+export type AssistantProviderStatus = z.infer<typeof assistantProviderStatusSchema>;
+
 export interface AssistantChatResponseData {
   readonly conversationId: string;
   readonly message: string;
   readonly status: z.infer<typeof assistantResponseStatusSchema>;
+  readonly providerStatus: AssistantProviderStatus | null;
   readonly sessionId: string | null;
   readonly executionId: string | null;
   readonly verification: z.infer<typeof assistantVerificationStatusSchema>;

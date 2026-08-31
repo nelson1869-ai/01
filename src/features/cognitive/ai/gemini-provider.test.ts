@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AiProviderError, sanitizeErrorMessage } from "./ai-errors";
 import { GeminiStructuredAiProvider } from "./gemini-provider";
 import { FakeStructuredAiProvider } from "./testing/fake-ai-provider";
 
 describe("GeminiStructuredAiProvider and AI Error handling", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("fails closed with MISSING_CREDENTIAL when GEMINI_API_KEY is not provided", async () => {
     const provider = new GeminiStructuredAiProvider({ apiKey: "" });
 
@@ -121,5 +125,101 @@ describe("GeminiStructuredAiProvider and AI Error handling", () => {
         schema: z.any(),
       }),
     ).rejects.toMatchObject({ code: "SAFETY_BLOCKED", isRetryable: false });
+  });
+
+  it("passes AbortSignal to generateContent and clears the timeout timer after success", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    const provider = new GeminiStructuredAiProvider({
+      defaultTimeoutMs: 100,
+      client: {
+        models: {
+          generateContent: vi.fn(async (params) => {
+            signal = params.config?.abortSignal;
+            return { text: '{"result":"ok"}' };
+          }),
+        },
+      } as never,
+    });
+
+    const result = await provider.generateStructured({
+      taskName: "timer-success",
+      systemInstruction: "test",
+      prompt: "test",
+      schema: z.object({ result: z.string() }),
+    });
+
+    expect(result.value).toEqual({ result: "ok" });
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("aborts the SDK request, normalizes the abort to TIMEOUT, and clears the timer", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    const provider = new GeminiStructuredAiProvider({
+      defaultTimeoutMs: 25,
+      client: {
+        models: {
+          generateContent: vi.fn((params) => {
+            signal = params.config?.abortSignal;
+            return new Promise((_, reject) => {
+              signal?.addEventListener("abort", () => {
+                reject(new DOMException("The operation was aborted.", "AbortError"));
+              }, { once: true });
+            });
+          }),
+        },
+      } as never,
+    });
+
+    const pending = provider.generateStructured({
+      taskName: "timer-timeout",
+      systemInstruction: "test",
+      prompt: "test",
+      schema: z.object({ result: z.string() }),
+    });
+    const rejected = expect(pending).rejects.toMatchObject({ code: "TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(25);
+    await rejected;
+
+    expect(signal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not emit an unhandled rejection if a non-cooperative request rejects after timeout", async () => {
+    vi.useFakeTimers();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    let rejectRequest: ((reason?: unknown) => void) | undefined;
+    try {
+      const provider = new GeminiStructuredAiProvider({
+        defaultTimeoutMs: 10,
+        client: {
+          models: {
+            generateContent: vi.fn(() => new Promise((_, reject) => {
+              rejectRequest = reject;
+            })),
+          },
+        } as never,
+      });
+      const pending = provider.generateStructured({
+        taskName: "late-rejection",
+        systemInstruction: "test",
+        prompt: "test",
+        schema: z.object({ result: z.string() }),
+      });
+      const rejected = expect(pending).rejects.toMatchObject({ code: "TIMEOUT" });
+      await vi.advanceTimersByTimeAsync(10);
+      await rejected;
+      rejectRequest?.(new Error("late raw provider failure"));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 });
