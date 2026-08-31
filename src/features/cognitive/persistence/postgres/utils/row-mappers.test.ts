@@ -331,14 +331,14 @@ describe("persistence row decoding and validation", () => {
       reward_rule_id: "rule-1",
       reward_idempotency_key: "rew:key:1",
       signal: "SUCCESS",
-      value: "10.0000",
+      value: "5.0000",
       reason: "Successful verification",
       created_at: "2026-08-30T00:08:00.000Z",
     };
 
     const rew = decodeRewardEventRow(rewRaw);
     expect(rew.rewardEventId).toBe("rew-1");
-    expect(rew.value).toBe(10);
+    expect(rew.value).toBe(5);
 
     const memRaw = {
       memory_id: "mem-1",

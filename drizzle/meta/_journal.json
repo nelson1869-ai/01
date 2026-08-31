@@ -15,6 +15,13 @@
       "when": 1788132138306,
       "tag": "0001_blue_molly_hayes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788136600012,
+      "tag": "0002_uneven_lord_hawal",
+      "breakpoints": true
     }
   ]
 }

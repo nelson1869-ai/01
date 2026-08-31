@@ -472,7 +472,7 @@ describe("live PostgreSQL cognitive ledger repositories integration tests", () =
       rewardRuleId: "rule-correctness-v1",
       rewardIdempotencyKey: "rew:ver-rew-1:rule-1",
       signal: "SUCCESS",
-      value: 10,
+      value: 5,
       reason: "Execution verified correct",
       createdAt: "2026-08-30T00:03:00.000Z",
     };
@@ -485,7 +485,7 @@ describe("live PostgreSQL cognitive ledger repositories integration tests", () =
 
     const conflicting: PersistedRewardEvent = {
       ...reward,
-      value: 5,
+      reason: "Different reason that conflicts with original",
     };
     await expect(
       rewardRepository.appendReward(context.db, conflicting),

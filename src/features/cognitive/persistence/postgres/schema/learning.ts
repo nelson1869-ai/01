@@ -53,7 +53,7 @@ export const rewardEvents = pgTable(
     index("reward_events_verification_id_idx").on(table.verificationId),
     check(
       "reward_events_signal_valid",
-      sql`${table.signal} IN ('SUCCESS', 'HUMAN_APPROVAL', 'CORRECTION', 'FAILURE', 'HALLUCINATION', 'UNSAFE_ACTION')`,
+      sql`${table.signal} IN ('PERFECT', 'SUCCESS', 'HUMAN_APPROVAL', 'NEUTRAL', 'CORRECTION', 'FAILURE', 'HALLUCINATION', 'UNSAFE_ACTION')`,
     ),
   ],
 );

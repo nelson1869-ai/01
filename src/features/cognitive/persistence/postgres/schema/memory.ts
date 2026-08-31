@@ -12,6 +12,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
+import { resultVerifications } from "./audit";
 import { evidenceRecords } from "./decisions";
 
 export const verifiedMemory = pgTable(
@@ -27,6 +28,10 @@ export const verifiedMemory = pgTable(
       length: 256,
     }).notNull(),
     supersedesMemoryId: varchar("supersedes_memory_id", { length: 256 }),
+    verificationId: varchar("verification_id", { length: 256 }).references(
+      () => resultVerifications.verificationId,
+      { onDelete: "restrict" },
+    ),
     verifiedAt: timestamp("verified_at", {
       withTimezone: true,
       mode: "string",
@@ -43,6 +48,7 @@ export const verifiedMemory = pgTable(
       table.memoryVersion,
     ),
     index("verified_memory_kind_key_idx").on(table.kind, table.memoryKey),
+    index("verified_memory_verification_id_idx").on(table.verificationId),
     check(
       "verified_memory_kind_valid",
       sql`${table.kind} IN ('FACT', 'POLICY', 'SKILL', 'PROCEDURE')`,

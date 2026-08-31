@@ -62,7 +62,7 @@ const validReward = {
   rewardRuleId: "verified-success-v1",
   rewardIdempotencyKey: "reward:verification-1:verified-success-v1",
   signal: "SUCCESS",
-  value: 10,
+  value: 5,
   reason: "Verified successful completion.",
   createdAt: "2026-08-30T00:04:00.000Z",
 };

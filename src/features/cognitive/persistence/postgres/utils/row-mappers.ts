@@ -714,6 +714,8 @@ export function decodeVerifiedMemoryRow(
       raw.admissionRuleVersion ?? raw.admission_rule_version,
     supersedesMemoryId:
       raw.supersedesMemoryId ?? raw.supersedes_memory_id ?? null,
+    verificationId:
+      raw.verificationId ?? raw.verification_id ?? null,
     verifiedAt: normalizeDateString(raw.verifiedAt ?? raw.verified_at),
     createdAt: normalizeDateString(raw.createdAt ?? raw.created_at),
   };

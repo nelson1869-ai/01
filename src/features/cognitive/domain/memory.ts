@@ -7,6 +7,7 @@ export type VerifiedMemory = Readonly<{
   content: Readonly<Record<string, unknown>>;
   sourceIds: readonly string[];
   confidence: number;
+  verificationId?: string | null;
   verifiedAt: string;
   createdAt: string;
 }>;

@@ -19,6 +19,7 @@ export const persistedVerifiedMemorySchema = z
     confidence: confidenceSchema,
     admissionRuleVersion: identifierSchema,
     supersedesMemoryId: identifierSchema.nullable(),
+    verificationId: identifierSchema.nullable().optional(),
     verifiedAt: timestampSchema,
     createdAt: timestampSchema,
   })

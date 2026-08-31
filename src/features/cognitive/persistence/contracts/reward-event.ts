@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { canonicalRewardValueForSignal } from "../../domain/reward";
 import {
   finiteNumberSchema,
   idempotencyKeySchema,
@@ -16,8 +17,10 @@ export const persistedRewardEventSchema = z
     rewardRuleId: identifierSchema,
     rewardIdempotencyKey: idempotencyKeySchema,
     signal: z.enum([
+      "PERFECT",
       "SUCCESS",
       "HUMAN_APPROVAL",
+      "NEUTRAL",
       "CORRECTION",
       "FAILURE",
       "HALLUCINATION",
@@ -27,6 +30,14 @@ export const persistedRewardEventSchema = z
     reason: summarySchema,
     createdAt: timestampSchema,
   })
+  .refine(
+    (data) => data.value === canonicalRewardValueForSignal(data.signal),
+    {
+      message:
+        "Reward value must match canonical numeric value for its signal.",
+      path: ["value"],
+    },
+  )
   .readonly();
 
 export type PersistedRewardEvent = z.infer<

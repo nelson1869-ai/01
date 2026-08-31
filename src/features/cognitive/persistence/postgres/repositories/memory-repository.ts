@@ -24,6 +24,7 @@ function memoryContentHash(m: PersistedVerifiedMemory): string {
     confidence: m.confidence,
     admissionRuleVersion: m.admissionRuleVersion,
     supersedesMemoryId: m.supersedesMemoryId ?? null,
+    verificationId: m.verificationId ?? null,
   });
 }
 
@@ -146,6 +147,7 @@ export class MemoryRepository {
           confidence: memory.confidence.toFixed(4),
           admissionRuleVersion: memory.admissionRuleVersion,
           supersedesMemoryId: memory.supersedesMemoryId ?? null,
+          verificationId: memory.verificationId ?? null,
           verifiedAt: memory.verifiedAt,
           createdAt: memory.createdAt,
         })

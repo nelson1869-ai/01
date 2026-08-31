@@ -1,0 +1,5 @@
+ALTER TABLE "reward_events" DROP CONSTRAINT "reward_events_signal_valid";--> statement-breakpoint
+ALTER TABLE "verified_memory" ADD COLUMN "verification_id" varchar(256);--> statement-breakpoint
+ALTER TABLE "verified_memory" ADD CONSTRAINT "verified_memory_verification_id_result_verifications_verification_id_fk" FOREIGN KEY ("verification_id") REFERENCES "public"."result_verifications"("verification_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "verified_memory_verification_id_idx" ON "verified_memory" USING btree ("verification_id");--> statement-breakpoint
+ALTER TABLE "reward_events" ADD CONSTRAINT "reward_events_signal_valid" CHECK ("reward_events"."signal" IN ('PERFECT', 'SUCCESS', 'HUMAN_APPROVAL', 'NEUTRAL', 'CORRECTION', 'FAILURE', 'HALLUCINATION', 'UNSAFE_ACTION'));
