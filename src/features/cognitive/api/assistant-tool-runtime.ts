@@ -1,7 +1,10 @@
 import type { OperationAdapter } from "../adapters/adapter-contract";
 import { ALLOWED_GITHUB_REPO } from "../adapters/github/github-adapter";
 import type { ResultVerifier } from "../domain/verifier-contract";
-import type { CandidateGeneratorPort, PerceptionPort } from "../orchestration/cognitive-ports";
+import type {
+  CandidateGeneratorPort,
+  PerceptionPort,
+} from "../orchestration/cognitive-ports";
 import type { CognitiveCyclePorts } from "../orchestration/cognitive-loop-driver";
 import type { PerceptionResult } from "../orchestration/context-assembler";
 import { createCanonicalFingerprint } from "../persistence/postgres/utils/canonical-fingerprint";
@@ -11,8 +14,14 @@ import { ingestCue } from "../persistence/postgres/transactions/ingest-cue";
 import { observationRepository } from "../persistence/postgres/repositories/observation-repository";
 import { verificationRepository } from "../persistence/postgres/repositories/verification-repository";
 import type { AssistantIntent } from "./assistant-ai";
-import { createDefaultCognitivePorts, executeSessionCycle } from "./runtime-composition";
-import type { BuiltOperationRequest, OperationRequestBuilderPort } from "../orchestration/operation-request-builder";
+import {
+  createDefaultCognitivePorts,
+  executeSessionCycle,
+} from "./runtime-composition";
+import type {
+  BuiltOperationRequest,
+  OperationRequestBuilderPort,
+} from "../orchestration/operation-request-builder";
 import type { PersistedCandidateAction } from "../persistence/contracts/persisted-candidate-action";
 import type { PersistedActionPlan } from "../persistence/contracts/persisted-action-plan";
 import type { PlanStepProposal } from "../orchestration/cognitive-ports";
@@ -20,7 +29,13 @@ import type { PlanStepProposal } from "../orchestration/cognitive-ports";
 import type { AssistantProgressStage } from "./assistant-progress";
 
 export interface AssistantToolRunResult {
-  readonly status: "VERIFIED" | "FAILED" | "INCONCLUSIVE" | "UNKNOWN" | "RECONCILIATION_REQUIRED" | "DENIED";
+  readonly status:
+    | "VERIFIED"
+    | "FAILED"
+    | "INCONCLUSIVE"
+    | "UNKNOWN"
+    | "RECONCILIATION_REQUIRED"
+    | "DENIED";
   readonly sessionId: string;
   readonly cueId: string;
   readonly executionId: string | null;
@@ -35,7 +50,9 @@ export interface AssistantToolRunnerPort {
     sanitizedMessage: string,
     now: string,
     options?: {
-      readonly onStage?: (stage: AssistantProgressStage) => void | Promise<void>;
+      readonly onStage?: (
+        stage: AssistantProgressStage,
+      ) => void | Promise<void>;
       readonly signal?: AbortSignal;
     },
   ): Promise<AssistantToolRunResult>;
@@ -59,19 +76,23 @@ class AssistantPerception implements PerceptionPort {
 
 class AssistantCandidateGenerator implements CandidateGeneratorPort {
   constructor(private readonly intent: AssistantIntent) {}
-  async generateCandidates(context: Parameters<CandidateGeneratorPort["generateCandidates"]>[0]) {
+  async generateCandidates(
+    context: Parameters<CandidateGeneratorPort["generateCandidates"]>[0],
+  ) {
     if (this.intent.kind !== "TOOL_REQUIRED" || !this.intent.action) return [];
-    return [{
-      candidateId: `cand:${context.cue.cueId}:assistant`,
-      cueId: context.cue.cueId,
-      goal: this.intent.goal,
-      action: this.intent.action,
-      confidence: 0.95,
-      expectedUtility: 0.9,
-      estimatedRisk: 0.05,
-      estimatedCost: 0.05,
-      evidenceIds: [],
-    }];
+    return [
+      {
+        candidateId: `cand:${context.cue.cueId}:assistant`,
+        cueId: context.cue.cueId,
+        goal: this.intent.goal,
+        action: this.intent.action,
+        confidence: 0.95,
+        expectedUtility: 0.9,
+        estimatedRisk: 0.05,
+        estimatedCost: 0.05,
+        evidenceIds: [],
+      },
+    ];
   }
 }
 
@@ -85,7 +106,9 @@ class AssistantOperationRequestBuilder implements OperationRequestBuilderPort {
     void _plan;
     void _step;
     const operationKind = candidate.action;
-    const request: Record<string, unknown> = { repository: ALLOWED_GITHUB_REPO };
+    const request: Record<string, unknown> = {
+      repository: ALLOWED_GITHUB_REPO,
+    };
     if (operationKind === "github.contents.read") {
       request.path = this.intent.path ?? "README.md";
       request.ref = "main";
@@ -93,7 +116,10 @@ class AssistantOperationRequestBuilder implements OperationRequestBuilderPort {
       request.issueNumber = this.intent.issueNumber ?? 1;
     } else if (operationKind === "github.pull_request.get") {
       request.pullNumber = this.intent.pullNumber ?? 1;
-    } else if (operationKind === "github.issues.list" || operationKind === "github.pull_requests.list") {
+    } else if (
+      operationKind === "github.issues.list" ||
+      operationKind === "github.pull_requests.list"
+    ) {
       request.state = "open";
       request.perPage = 10;
     }
@@ -101,7 +127,11 @@ class AssistantOperationRequestBuilder implements OperationRequestBuilderPort {
       operationKind,
       providerScope: "github-rest",
       request,
-      requestFingerprint: createCanonicalFingerprint({ operationKind, providerScope: "github-rest", request }),
+      requestFingerprint: createCanonicalFingerprint({
+        operationKind,
+        providerScope: "github-rest",
+        request,
+      }),
       providerIdempotencyKey: null,
     };
   }
@@ -110,8 +140,12 @@ class AssistantOperationRequestBuilder implements OperationRequestBuilderPort {
 function boundedProviderValue(value: unknown, depth = 0): unknown {
   if (depth > 5) return "[truncated]";
   if (typeof value === "string") return value.slice(0, 8000);
-  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
-  if (Array.isArray(value)) return value.slice(0, 50).map((item) => boundedProviderValue(item, depth + 1));
+  if (typeof value === "number" || typeof value === "boolean" || value === null)
+    return value;
+  if (Array.isArray(value))
+    return value
+      .slice(0, 50)
+      .map((item) => boundedProviderValue(item, depth + 1));
   if (value && typeof value === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value).slice(0, 50)) {
@@ -140,12 +174,16 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
     sanitizedMessage: string,
     now: string,
     options?: {
-      readonly onStage?: (stage: AssistantProgressStage) => void | Promise<void>;
+      readonly onStage?: (
+        stage: AssistantProgressStage,
+      ) => void | Promise<void>;
       readonly signal?: AbortSignal;
     },
   ): Promise<AssistantToolRunResult> {
     if (intent.kind !== "TOOL_REQUIRED" || !intent.action) {
-      throw new Error("Assistant tool runner requires a read-only tool intent.");
+      throw new Error(
+        "Assistant tool runner requires a read-only tool intent.",
+      );
     }
     await options?.onStage?.("SAFETY_CHECK");
     const cueId = `cue-${crypto.randomUUID()}`;
@@ -168,7 +206,9 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
     await ingestCue(this.db, { cue, sessionId, maxRetries: 0 });
 
     await options?.onStage?.("PLANNING");
-    const defaults = this.options.ports ?? createDefaultCognitivePorts({ adapter: this.options.adapter });
+    const defaults =
+      this.options.ports ??
+      createDefaultCognitivePorts({ adapter: this.options.adapter });
     const ports: CognitiveCyclePorts = {
       ...defaults,
       perception: new AssistantPerception(intent),
@@ -185,36 +225,92 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
     });
     const cycle = outcome.result;
     if (cycle.status === "RECONCILIATION_REQUIRED") {
-      return { status: "RECONCILIATION_REQUIRED", sessionId, cueId, executionId: cycle.executionId, verificationId: null, verifiedFacts: null, reason: cycle.reason };
+      return {
+        status: "RECONCILIATION_REQUIRED",
+        sessionId,
+        cueId,
+        executionId: cycle.executionId,
+        verificationId: null,
+        verifiedFacts: null,
+        reason: cycle.reason,
+      };
     }
-    if (cycle.status === "HUMAN_REVIEW_REQUIRED" || cycle.status === "BLOCKED" || cycle.status === "NO_ACTION") {
-      return { status: "DENIED", sessionId, cueId, executionId: null, verificationId: null, verifiedFacts: null, reason: cycle.reason };
+    if (
+      cycle.status === "HUMAN_REVIEW_REQUIRED" ||
+      cycle.status === "BLOCKED" ||
+      cycle.status === "NO_ACTION"
+    ) {
+      return {
+        status: "DENIED",
+        sessionId,
+        cueId,
+        executionId: null,
+        verificationId: null,
+        verifiedFacts: null,
+        reason: cycle.reason,
+      };
     }
-    const executionId = "executionId" in cycle ? cycle.executionId ?? null : null;
+    const executionId =
+      "executionId" in cycle ? (cycle.executionId ?? null) : null;
     if (!executionId) {
-      return { status: "UNKNOWN", sessionId, cueId, executionId: null, verificationId: null, verifiedFacts: null, reason: "The tool result did not include an execution identifier." };
+      return {
+        status: "UNKNOWN",
+        sessionId,
+        cueId,
+        executionId: null,
+        verificationId: null,
+        verifiedFacts: null,
+        reason: "The tool result did not include an execution identifier.",
+      };
     }
 
     await options?.onStage?.("OBSERVING");
     await options?.onStage?.("VERIFYING");
-    const verification = await verificationRepository.findLatestVerificationByExecutionId(this.db, executionId);
+    const verification =
+      await verificationRepository.findLatestVerificationByExecutionId(
+        this.db,
+        executionId,
+      );
     if (!verification) {
-      return { status: "UNKNOWN", sessionId, cueId, executionId, verificationId: null, verifiedFacts: null, reason: "No durable result verification was found." };
+      return {
+        status: "UNKNOWN",
+        sessionId,
+        cueId,
+        executionId,
+        verificationId: null,
+        verifiedFacts: null,
+        reason: "No durable result verification was found.",
+      };
     }
     if (verification.status !== "VERIFIED") {
-      return { status: verification.status, sessionId, cueId, executionId, verificationId: verification.verificationId, verifiedFacts: null, reason: verification.reason };
+      return {
+        status: verification.status,
+        sessionId,
+        cueId,
+        executionId,
+        verificationId: verification.verificationId,
+        verifiedFacts: null,
+        reason: verification.reason,
+      };
     }
-    const observations = await observationRepository.findManyObservationsByExecutionId(this.db, executionId);
-    const facts = observations[0]?.data && typeof observations[0].data === "object"
-      ? (observations[0].data as Record<string, unknown>).result
-      : null;
+    const observations =
+      await observationRepository.findManyObservationsByExecutionId(
+        this.db,
+        executionId,
+      );
+    const facts =
+      observations[0]?.data && typeof observations[0].data === "object"
+        ? (observations[0].data as Record<string, unknown>).result
+        : null;
     return {
       status: "VERIFIED",
       sessionId,
       cueId,
       executionId,
       verificationId: verification.verificationId,
-      verifiedFacts: (boundedProviderValue(facts ?? {}) ?? {}) as Readonly<Record<string, unknown>>,
+      verifiedFacts: (boundedProviderValue(facts ?? {}) ?? {}) as Readonly<
+        Record<string, unknown>
+      >,
       reason: verification.reason,
     };
   }

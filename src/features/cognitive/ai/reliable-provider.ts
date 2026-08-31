@@ -104,7 +104,8 @@ export class ReliableStructuredAiProvider implements StructuredAiProvider {
       ...(options.backoffDelaysMs ?? {}),
     };
     this.sleepFn =
-      options.sleepFn ?? ((ms: number) => new Promise((res) => setTimeout(res, ms)));
+      options.sleepFn ??
+      ((ms: number) => new Promise((res) => setTimeout(res, ms)));
     this.defaultCollector = options.telemetryCollector;
   }
 
@@ -176,6 +177,9 @@ export class ReliableStructuredAiProvider implements StructuredAiProvider {
       }
     }
 
-    throw AiProviderError.unknown(this.providerName, "Retry loop terminated unexpectedly.");
+    throw AiProviderError.unknown(
+      this.providerName,
+      "Retry loop terminated unexpectedly.",
+    );
   }
 }

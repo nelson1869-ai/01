@@ -22,7 +22,9 @@ export const assistantProgressStageSchema = z.enum([
   "COMPLETED",
 ]);
 
-export type AssistantProgressStage = z.infer<typeof assistantProgressStageSchema>;
+export type AssistantProgressStage = z.infer<
+  typeof assistantProgressStageSchema
+>;
 
 export const safeAssistantProgressEventSchema = z.object({
   requestId: z.string().min(1).max(128),
@@ -36,7 +38,9 @@ export const safeAssistantProgressEventSchema = z.object({
   fallback: z.boolean().optional(),
 });
 
-export type SafeAssistantProgressEvent = z.infer<typeof safeAssistantProgressEventSchema>;
+export type SafeAssistantProgressEvent = z.infer<
+  typeof safeAssistantProgressEventSchema
+>;
 
 export interface AssistantProgressSink {
   emit(event: SafeAssistantProgressEvent): void | Promise<void>;
@@ -77,12 +81,15 @@ export function safeToolExecutionMessage(input: {
   pullNumber?: number | null;
 }): string {
   if (input.path) {
-    // Sanitize path for display - allow only safe alphanumeric path chars
-    const sanitizedPath = input.path.replace(/[^a-zA-Z0-9_./-]/g, "").slice(0, 64);
-    if (sanitizedPath.toLowerCase() === "readme.md") {
+    const raw = input.path.trim();
+    if (/^readme\.md$/i.test(raw) || raw.toLowerCase().endsWith("/readme.md")) {
       return "Reading README.md.";
     }
-    return `Reading ${sanitizedPath}.`;
+    const sanitized = raw.replace(/[^a-zA-Z0-9_./-]/g, "").slice(0, 64);
+    if (sanitized.length > 0) {
+      return `Reading ${sanitized}.`;
+    }
+    return "Reading the requested repository file.";
   }
   if (input.issueNumber) {
     const num = Math.floor(Math.abs(input.issueNumber));
@@ -172,7 +179,9 @@ export class ProgressEmitter {
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
-  async emit(options: EmitProgressOptions): Promise<SafeAssistantProgressEvent> {
+  async emit(
+    options: EmitProgressOptions,
+  ): Promise<SafeAssistantProgressEvent> {
     this.sequence += 1;
     const message = options.message ?? safeStageMessage(options.stage);
     const event: SafeAssistantProgressEvent = {

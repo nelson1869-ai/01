@@ -34,23 +34,80 @@ const STATIC_CAPABILITY_PATTERNS: readonly RegExp[] = [
 ];
 
 const EXTERNAL_DATA_PATTERNS: readonly RegExp[] = [
-  /\b(readme(\.md)?|repository|repo|github|issue|issues|pull request|pull requests|pr|prs|commit|commits|branch|branches|file|files|directory|folder|contents)\b/i,
-  /\b(check (my|the) (repo|repository|codebase))\b/i,
+  /\b(readme(\.md)?|repository|repo|github|issues?|pull\s*requests?|prs?|commits?|branch(es)?|files?|director(y|ies)|folders?|contents)\b/i,
+  /\b(check\s+(my|the)\s+(repo|repository|codebase))\b/i,
   /\b(read|inspect|list|summarize)\s+[a-z0-9_.-]+(\.[a-z0-9]+)?\b/i,
 ];
 
-const COMPLEX_REASONING_PATTERNS: readonly RegExp[] = [
-  /\b(architecture|architectural|refactor|refactoring|distributed system|consensus algorithm|concurrency model|race condition|deadlock analysis|time complexity|space complexity|memory leak analysis|formal verification|differential testing)\b/i,
-  /\b(design pattern|microservice|database schema migration strategy|zero-downtime|threat model)\b/i,
+interface ComplexitySignal {
+  readonly pattern: RegExp;
+  readonly weight: number;
+}
+
+const STRONG_COMPLEXITY_SIGNALS: readonly ComplexitySignal[] = [
+  { pattern: /\barchitect(ur(e|al)|ing)?\b/i, weight: 2 },
+  { pattern: /\brefactor(ing|s)?\b/i, weight: 2 },
+  { pattern: /\brace\s+conditions?\b/i, weight: 2 },
+  { pattern: /\bdeadlocks?\b/i, weight: 2 },
+  { pattern: /\bconcurrency(\s+(models?|problems?|issues?|control))?\b/i, weight: 2 },
+  { pattern: /\bconsensus(\s+algorithms?)?\b/i, weight: 2 },
+  { pattern: /\b(time|space|algorithmic)\s+complexity\b/i, weight: 2 },
+  { pattern: /\bmemory\s+leak(\s+analysis)?\b/i, weight: 2 },
+  { pattern: /\bformal\s+verification\b/i, weight: 2 },
+  { pattern: /\bdifferential\s+testing\b/i, weight: 2 },
+  { pattern: /\b(system\s+design|design(\s+a|\s+an|\s+the)?\s+(distributed|scalable|event[\s-]processing))\b/i, weight: 2 },
+  { pattern: /\btransaction\s+isolation\b/i, weight: 2 },
+  { pattern: /\bconsistency\s+models?\b/i, weight: 2 },
+  { pattern: /\bfault[\s-]toleran(ce|t)\b/i, weight: 2 },
+  { pattern: /\bzero[\s-]downtime\b/i, weight: 2 },
+  { pattern: /\bthreat\s+models?\b/i, weight: 2 },
+  { pattern: /\b(database\s+schema\s+)?migration\s+strategy\b/i, weight: 2 },
 ];
 
+const SUPPORTING_COMPLEXITY_SIGNALS: readonly ComplexitySignal[] = [
+  { pattern: /\bdistributed\b/i, weight: 1 },
+  { pattern: /\bconcurrent(ly)?\b/i, weight: 1 },
+  { pattern: /\bscalab(le|ility)\b/i, weight: 1 },
+  { pattern: /\bmicroservices?\b/i, weight: 1 },
+  { pattern: /\bidempotenc(y|e|ent)\b/i, weight: 1 },
+  { pattern: /\bdesign\s+patterns?\b/i, weight: 1 },
+];
+
+export function normalizeTaskMessage(message: string): string {
+  return message.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 export function isStaticCapabilityQuery(message: string): boolean {
-  const normalized = message.trim().toLowerCase();
+  const normalized = normalizeTaskMessage(message);
   return STATIC_CAPABILITY_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
+export function isExternalDataQuery(message: string): boolean {
+  const normalized = normalizeTaskMessage(message);
+  return EXTERNAL_DATA_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function calculateComplexityScore(message: string): number {
+  const normalized = normalizeTaskMessage(message);
+  let score = 0;
+
+  for (const signal of STRONG_COMPLEXITY_SIGNALS) {
+    if (signal.pattern.test(normalized)) {
+      score += signal.weight;
+    }
+  }
+
+  for (const signal of SUPPORTING_COMPLEXITY_SIGNALS) {
+    if (signal.pattern.test(normalized)) {
+      score += signal.weight;
+    }
+  }
+
+  return score;
+}
+
 export function routeTask(message: string): ModelRouteDecision {
-  const normalized = message.trim();
+  const normalized = normalizeTaskMessage(message);
 
   // 1. Zero-model fast path for static capability & greetings
   if (isStaticCapabilityQuery(normalized)) {
@@ -64,7 +121,7 @@ export function routeTask(message: string): ModelRouteDecision {
   }
 
   // 2. Repository & External Data
-  if (EXTERNAL_DATA_PATTERNS.some((p) => p.test(normalized))) {
+  if (isExternalDataQuery(normalized)) {
     return {
       taskClass: "CURRENT_EXTERNAL_DATA",
       selectedProvider: "gemini",
@@ -74,8 +131,9 @@ export function routeTask(message: string): ModelRouteDecision {
     };
   }
 
-  // 3. Complex Reasoning & Architecture
-  if (COMPLEX_REASONING_PATTERNS.some((p) => p.test(normalized))) {
+  // 3. Complex Reasoning & Architecture (Threshold score >= 2)
+  const complexityScore = calculateComplexityScore(normalized);
+  if (complexityScore >= 2) {
     return {
       taskClass: "COMPLEX_REASONING",
       selectedProvider: "gemini",

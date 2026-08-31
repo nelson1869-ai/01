@@ -30,6 +30,15 @@ import type {
   PersistedAssistantTurn,
 } from "../persistence/contracts/assistant-conversation";
 import type { DatabaseExecutor } from "../persistence/postgres/transactions/transaction-executor";
+import {
+  type AssistantProgressSink,
+  type AssistantProgressStage,
+  NoopAssistantProgressSink,
+  ProgressEmitter,
+  safeModelSelectedMessage,
+  safeRetryMessage,
+  safeToolExecutionMessage,
+} from "./assistant-progress";
 
 export type { AssistantTurnKind, AssistantTurnStatus };
 
@@ -94,6 +103,12 @@ export interface AssistantToolRunnerPort {
     intent: AssistantIntent,
     userMessage: string,
     now: string,
+    options?: {
+      readonly onStage?: (
+        stage: AssistantProgressStage,
+      ) => void | Promise<void>;
+      readonly signal?: AbortSignal;
+    },
   ): Promise<{
     cueId: string | null;
     sessionId: string | null;
@@ -107,8 +122,11 @@ export interface AssistantToolRunnerPort {
       | "RECONCILIATION_REQUIRED"
       | "DENIED";
     verifiedFacts: Readonly<Record<string, unknown>> | null;
+    reason?: string;
   }>;
 }
+
+export type { AssistantToolRunResult } from "./assistant-tool-runtime";
 
 export class DatabaseAssistantConversationStore implements AssistantConversationStorePort {
   constructor(private readonly db: DatabaseExecutor) {}
@@ -139,15 +157,14 @@ export class DatabaseAssistantConversationStore implements AssistantConversation
 
 function boundedContext(
   turns: readonly PersistedAssistantTurn[],
-): SafeConversationTurn[] {
-  const selected: SafeConversationTurn[] = [];
+): readonly SafeConversationTurn[] {
   let remaining = MAX_CONTEXT_CHARACTERS;
-  for (const turn of [...turns].reverse()) {
-    if (!turn.assistantMessage || turn.status === "PROCESSING") continue;
-    const user = turn.userMessage.slice(0, Math.min(4000, remaining));
+  const selected: SafeConversationTurn[] = [];
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const turn = turns[i];
+    const user = turn.userMessage.slice(0, remaining);
     remaining -= user.length;
-    if (remaining <= 0) break;
-    const assistant = turn.assistantMessage.slice(0, Math.min(4000, remaining));
+    const assistant = (turn.assistantMessage ?? "").slice(0, remaining);
     remaining -= assistant.length;
     selected.push({
       userMessage: user,
@@ -210,13 +227,19 @@ export function isCrossProviderFallbackEligible(error: unknown): boolean {
 
 export interface AssistantChatServiceDependencies {
   readonly store: AssistantConversationStorePort;
-  readonly toolRunner: AssistantToolRunnerPort;
-  readonly providers?: Partial<Record<ModelProviderName, StructuredAiProvider>>;
   readonly interpreter?: AssistantIntentInterpreterPort;
   readonly composer?: AssistantResponseComposerPort;
   readonly fallbackInterpreter?: AssistantIntentInterpreterPort;
   readonly fallbackComposer?: AssistantResponseComposerPort;
+  readonly toolRunner: AssistantToolRunnerPort;
+  readonly providers?: Partial<Record<ModelProviderName, StructuredAiProvider>>;
   readonly now?: () => string;
+}
+
+export interface AssistantChatOptions {
+  readonly progressSink?: AssistantProgressSink;
+  readonly signal?: AbortSignal;
+  readonly requestId?: string;
 }
 
 export class AssistantChatService {
@@ -254,16 +277,29 @@ export class AssistantChatService {
 
   async chat(
     request: AssistantChatRequest,
+    options?: AssistantChatOptions,
   ): Promise<AssistantChatResponseData> {
     const startTime = Date.now();
     const telemetryCollector = new SimpleAiTelemetryCollector();
     const now = this.dependencies.now?.() ?? new Date().toISOString();
+    const requestId = options?.requestId ?? `req-${crypto.randomUUID()}`;
+    const emitter = new ProgressEmitter(
+      options?.progressSink ?? new NoopAssistantProgressSink(),
+      requestId,
+      () => now,
+    );
+
+    await emitter.emit({ stage: "RECEIVED" });
+
     const conversationId =
       request.conversationId ?? `conv-${crypto.randomUUID()}`;
     if (!request.conversationId) {
       await this.dependencies.store.createConversation(conversationId, now);
     }
     const sanitizedMessage = redactAssistantMessage(request.message);
+
+    await emitter.emit({ stage: "CONTEXT" });
+
     const priorTurns = await this.dependencies.store.recentTurns(
       conversationId,
       MAX_CONTEXT_TURNS,
@@ -343,6 +379,12 @@ export class AssistantChatService {
 
     // 1. Zero-Model Fast Path for static capability / greetings
     if (routeDecision.taskClass === "STATIC_CAPABILITY") {
+      await emitter.emit({
+        stage: "COMPLETED",
+        provider: "autodo",
+        model: "deterministic",
+        fallback: false,
+      });
       return finish({
         kind: "DIRECT_ANSWER",
         status: "COMPLETED",
@@ -365,6 +407,13 @@ export class AssistantChatService {
     // 2. Deterministic Denial
     const denial = deterministicDenialReason(sanitizedMessage);
     if (denial) {
+      await emitter.emit({ stage: "SAFETY_CHECK" });
+      await emitter.emit({
+        stage: "DENIED",
+        provider: "autodo",
+        model: "deterministic",
+        fallback: false,
+      });
       return finish({
         kind: "DENIED",
         status: "DENIED",
@@ -385,6 +434,16 @@ export class AssistantChatService {
     }
 
     try {
+      await emitter.emit({ stage: "ROUTING" });
+      await emitter.emit({
+        stage: "MODEL_SELECTED",
+        provider: activeProvider,
+        model: activeModel,
+        message: safeModelSelectedMessage(activeProvider, activeModel),
+        fallback: false,
+      });
+      await emitter.emit({ stage: "GENERATING" });
+
       // 3. Ingress Intent Interpretation (with fallback)
       let intent: AssistantIntent;
       try {
@@ -394,6 +453,16 @@ export class AssistantChatService {
         intent = await primaryInterpreter.interpret(sanitizedMessage, context, {
           telemetryCollector,
           model: routeDecision.selectedModel,
+          signal: options?.signal,
+          onRetry: async (info) => {
+            await emitter.emit({
+              stage: "RETRYING",
+              provider: info.provider as ModelProviderName,
+              model: info.model,
+              attempt: info.attempt,
+              message: safeRetryMessage(info.errorCode),
+            });
+          },
         });
       } catch (interpreterError: unknown) {
         if (
@@ -404,6 +473,15 @@ export class AssistantChatService {
           fallbackUsed = true;
           activeProvider = fallback.provider;
           activeModel = fallback.model;
+          await emitter.emit({ stage: "FALLBACK" });
+          await emitter.emit({
+            stage: "MODEL_SELECTED",
+            provider: activeProvider,
+            model: activeModel,
+            message: safeModelSelectedMessage(activeProvider, activeModel),
+            fallback: true,
+          });
+          await emitter.emit({ stage: "GENERATING" });
           const fallbackInterpreter = this.getInterpreter(fallback.provider);
           intent = await fallbackInterpreter.interpret(
             sanitizedMessage,
@@ -411,6 +489,16 @@ export class AssistantChatService {
             {
               telemetryCollector,
               model: fallback.model,
+              signal: options?.signal,
+              onRetry: async (info) => {
+                await emitter.emit({
+                  stage: "RETRYING",
+                  provider: info.provider as ModelProviderName,
+                  model: info.model,
+                  attempt: info.attempt,
+                  message: safeRetryMessage(info.errorCode),
+                });
+              },
             },
           );
         } else {
@@ -419,6 +507,7 @@ export class AssistantChatService {
       }
 
       if (intent.kind === "DENIED") {
+        await emitter.emit({ stage: "DENIED" });
         return finish({
           kind: "DENIED",
           status: "DENIED",
@@ -431,6 +520,7 @@ export class AssistantChatService {
         });
       }
       if (intent.kind === "CLARIFICATION") {
+        await emitter.emit({ stage: "CLARIFICATION_REQUIRED" });
         return finish({
           kind: "CLARIFICATION",
           status: "CLARIFICATION_REQUIRED",
@@ -445,6 +535,7 @@ export class AssistantChatService {
         });
       }
       if (intent.kind === "DIRECT_ANSWER") {
+        await emitter.emit({ stage: "COMPOSING" });
         let message: string;
         try {
           const primaryComposer = this.getComposer(activeProvider);
@@ -454,6 +545,16 @@ export class AssistantChatService {
             {
               telemetryCollector,
               model: activeModel,
+              signal: options?.signal,
+              onRetry: async (info) => {
+                await emitter.emit({
+                  stage: "RETRYING",
+                  provider: info.provider as ModelProviderName,
+                  model: info.model,
+                  attempt: info.attempt,
+                  message: safeRetryMessage(info.errorCode),
+                });
+              },
             },
           );
         } catch (composerError: unknown) {
@@ -466,6 +567,15 @@ export class AssistantChatService {
             fallbackUsed = true;
             activeProvider = fallback.provider;
             activeModel = fallback.model;
+            await emitter.emit({ stage: "FALLBACK" });
+            await emitter.emit({
+              stage: "MODEL_SELECTED",
+              provider: activeProvider,
+              model: activeModel,
+              message: safeModelSelectedMessage(activeProvider, activeModel),
+              fallback: true,
+            });
+            await emitter.emit({ stage: "COMPOSING" });
             const fallbackComposer = this.getComposer(fallback.provider);
             message = await fallbackComposer.composeDirect(
               sanitizedMessage,
@@ -473,6 +583,16 @@ export class AssistantChatService {
               {
                 telemetryCollector,
                 model: fallback.model,
+                signal: options?.signal,
+                onRetry: async (info) => {
+                  await emitter.emit({
+                    stage: "RETRYING",
+                    provider: info.provider as ModelProviderName,
+                    model: info.model,
+                    attempt: info.attempt,
+                    message: safeRetryMessage(info.errorCode),
+                  });
+                },
               },
             );
           } else {
@@ -480,6 +600,7 @@ export class AssistantChatService {
           }
         }
 
+        await emitter.emit({ stage: "COMPLETED" });
         return finish({
           kind: "DIRECT_ANSWER",
           status: "COMPLETED",
@@ -498,6 +619,19 @@ export class AssistantChatService {
         intent,
         sanitizedMessage,
         now,
+        {
+          signal: options?.signal,
+          onStage: async (stage) => {
+            if (stage === "TOOL_EXECUTION") {
+              await emitter.emit({
+                stage: "TOOL_EXECUTION",
+                message: safeToolExecutionMessage(intent),
+              });
+            } else {
+              await emitter.emit({ stage });
+            }
+          },
+        },
       );
       completedTool = tool;
       const links = {
@@ -508,6 +642,7 @@ export class AssistantChatService {
       };
 
       if (tool.status === "VERIFIED" && tool.verifiedFacts) {
+        await emitter.emit({ stage: "COMPOSING" });
         let message: string;
         try {
           const primaryComposer = this.getComposer(activeProvider);
@@ -518,6 +653,16 @@ export class AssistantChatService {
             options: {
               telemetryCollector,
               model: activeModel,
+              signal: options?.signal,
+              onRetry: async (info) => {
+                await emitter.emit({
+                  stage: "RETRYING",
+                  provider: info.provider as ModelProviderName,
+                  model: info.model,
+                  attempt: info.attempt,
+                  message: safeRetryMessage(info.errorCode),
+                });
+              },
             },
           });
         } catch (composerError: unknown) {
@@ -530,6 +675,15 @@ export class AssistantChatService {
             fallbackUsed = true;
             activeProvider = fallback.provider;
             activeModel = fallback.model;
+            await emitter.emit({ stage: "FALLBACK" });
+            await emitter.emit({
+              stage: "MODEL_SELECTED",
+              provider: activeProvider,
+              model: activeModel,
+              message: safeModelSelectedMessage(activeProvider, activeModel),
+              fallback: true,
+            });
+            await emitter.emit({ stage: "COMPOSING" });
             const fallbackComposer = this.getComposer(fallback.provider);
             message = await fallbackComposer.composeVerified({
               message: sanitizedMessage,
@@ -538,6 +692,16 @@ export class AssistantChatService {
               options: {
                 telemetryCollector,
                 model: fallback.model,
+                signal: options?.signal,
+                onRetry: async (info) => {
+                  await emitter.emit({
+                    stage: "RETRYING",
+                    provider: info.provider as ModelProviderName,
+                    model: info.model,
+                    attempt: info.attempt,
+                    message: safeRetryMessage(info.errorCode),
+                  });
+                },
               },
             });
           } else {
@@ -545,6 +709,7 @@ export class AssistantChatService {
           }
         }
 
+        await emitter.emit({ stage: "COMPLETED" });
         return finish({
           ...links,
           kind: "TOOL_REQUIRED",
@@ -559,6 +724,7 @@ export class AssistantChatService {
         });
       }
       if (tool.status === "DENIED") {
+        await emitter.emit({ stage: "DENIED" });
         return finish({
           ...links,
           kind: "TOOL_REQUIRED",
@@ -576,35 +742,51 @@ export class AssistantChatService {
         tool.status === "RECONCILIATION_REQUIRED"
           ? "RECONCILIATION_REQUIRED"
           : tool.status;
+
+      if (tool.status === "RECONCILIATION_REQUIRED") {
+        await emitter.emit({ stage: "RECONCILIATION_REQUIRED" });
+      } else {
+        await emitter.emit({ stage: "FAILED" });
+      }
+
       return finish({
         ...links,
         kind: "TOOL_REQUIRED",
-        status: "UNVERIFIED",
-        message: "I couldn’t verify that result yet.",
+        status:
+          tool.status === "RECONCILIATION_REQUIRED"
+            ? "FAILED"
+            : tool.status === "FAILED"
+              ? "UNVERIFIED"
+              : "FAILED",
+        message:
+          tool.status === "RECONCILIATION_REQUIRED"
+            ? "The operation requires reconciliation before AutoDo can continue safely."
+            : "I couldn’t verify that result yet.",
         verification,
         decisionSummary: [
-          "The tool result was not verified.",
-          "No unverified provider content was presented as fact.",
+          `The tool cycle concluded with status ${tool.status}.`,
+          tool.reason ?? "Tool execution failed.",
         ],
       });
-    } catch (error) {
+    } catch (error: unknown) {
+      await emitter.emit({ stage: "FAILED" });
       const failure = safeProviderFailure(error);
+      const decisionSummary = externalActionAttempted
+        ? [
+            failure.summary,
+            "No unverified provider result was presented as fact.",
+          ]
+        : [failure.summary, "No external action was performed."];
+
       return finish({
         kind: "DIRECT_ANSWER",
         status: "FAILED",
-        message: "I couldn’t complete that request safely.",
         providerStatus: failure.providerStatus,
-        verification: "UNKNOWN",
-        cueId: completedTool?.cueId,
-        sessionId: completedTool?.sessionId,
-        executionId: completedTool?.executionId,
-        verificationId: completedTool?.verificationId,
-        decisionSummary: [
-          failure.summary,
-          externalActionAttempted
-            ? "No unverified provider result was presented as fact."
-            : "No external action was performed.",
-        ],
+        message: "I couldn’t complete that request safely.",
+        verification: completedTool ? "UNKNOWN" : "UNKNOWN",
+        sessionId: completedTool?.sessionId ?? null,
+        executionId: completedTool?.executionId ?? null,
+        decisionSummary,
       });
     }
   }

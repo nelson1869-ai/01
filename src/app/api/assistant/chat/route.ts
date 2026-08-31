@@ -37,7 +37,7 @@ export function createAssistantChatPostHandler(
   };
 }
 
-function createDefaultService(): AssistantChatService {
+export function createDefaultAssistantChatService(): AssistantChatService {
   const { db } = getDatabaseContext();
   const rawGemini = new GeminiStructuredAiProvider({
     defaultModel: "gemini-3.5-flash-lite",
@@ -66,5 +66,7 @@ function createDefaultService(): AssistantChatService {
 }
 
 export async function POST(request: Request) {
-  return createAssistantChatPostHandler(createDefaultService())(request);
+  return createAssistantChatPostHandler(createDefaultAssistantChatService())(
+    request,
+  );
 }

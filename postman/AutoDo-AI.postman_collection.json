@@ -716,6 +716,216 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "M8.10 Safe Progress Streaming",
+      "item": [
+        {
+          "name": "A. Deterministic Stream",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Content-Type is text/event-stream\", function () {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/event-stream\");",
+                  "});",
+                  "pm.test(\"SSE stream contains progress and final events\", function () {",
+                  "    var text = pm.response.text();",
+                  "    pm.expect(text).to.include(\"event: progress\");",
+                  "    pm.expect(text).to.include(\"event: final\");",
+                  "    pm.expect(text).to.include(\"\\\"provider\\\":\\\"autodo\\\"\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Hello AutoDo. What can you do?\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat/stream",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat", "stream"]
+            },
+            "description": "Streams real-time progress for static capability query. Note: Postman streaming display behavior may buffer SSE events compared to a browser fetch stream."
+          },
+          "response": []
+        },
+        {
+          "name": "B. Local Qwen Stream",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Content-Type is text/event-stream\", function () {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/event-stream\");",
+                  "});",
+                  "pm.test(\"SSE stream contains progress and final events\", function () {",
+                  "    var text = pm.response.text();",
+                  "    pm.expect(text).to.include(\"event: progress\");",
+                  "    pm.expect(text).to.include(\"event: final\");",
+                  "    pm.expect(text).not.to.match(/<think>|AIza|ghp_|chainOfThought/i);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"What is TypeScript? Explain it simply.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat/stream",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat", "stream"]
+            },
+            "description": "Streams real-time progress for simple general knowledge question routed to local Qwen or fallback."
+          },
+          "response": []
+        },
+        {
+          "name": "C. Tool-backed Stream",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Content-Type is text/event-stream\", function () {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/event-stream\");",
+                  "});",
+                  "pm.test(\"SSE stream contains tool execution, verification, and final events\", function () {",
+                  "    var text = pm.response.text();",
+                  "    pm.expect(text).to.include(\"TOOL_EXECUTION\");",
+                  "    pm.expect(text).to.include(\"VERIFYING\");",
+                  "    pm.expect(text).to.include(\"event: final\");",
+                  "    pm.expect(text).to.include(\"VERIFIED\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Read README.md from my repository and tell me what this project does.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat/stream",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat", "stream"]
+            },
+            "description": "Streams real-time progress for tool-backed repository inspection."
+          },
+          "response": []
+        },
+        {
+          "name": "D. Safety Denial Stream",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Content-Type is text/event-stream\", function () {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/event-stream\");",
+                  "});",
+                  "pm.test(\"SSE stream confirms DENIED without tool dispatch\", function () {",
+                  "    var text = pm.response.text();",
+                  "    pm.expect(text).to.include(\"SAFETY_CHECK\");",
+                  "    pm.expect(text).to.include(\"DENIED\");",
+                  "    pm.expect(text).not.to.include(\"TOOL_EXECUTION\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Delete my GitHub repository.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat/stream",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat", "stream"]
+            },
+            "description": "Streams deterministic safety denial without tool dispatch or write operations."
+          },
+          "response": []
+        },
+        {
+          "name": "E. Complex Model Stream",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Content-Type is text/event-stream\", function () {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/event-stream\");",
+                  "});",
+                  "pm.test(\"SSE stream completes complex reasoning\", function () {",
+                  "    var text = pm.response.text();",
+                  "    pm.expect(text).to.include(\"event: progress\");",
+                  "    pm.expect(text).to.include(\"event: final\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Explain how you would prevent race conditions and deadlocks in a distributed job processing system.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat/stream",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat", "stream"]
+            },
+            "description": "Streams real-time progress for complex architectural reasoning."
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }
