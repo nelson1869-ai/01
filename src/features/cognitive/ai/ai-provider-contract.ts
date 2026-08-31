@@ -8,6 +8,17 @@ export interface StructuredAiRequest<T> {
   readonly jsonSchema?: Record<string, unknown>;
   readonly timeoutMs?: number;
   readonly model?: string;
+  readonly telemetryCollector?: {
+    record(stageTelemetry: {
+      stage: string;
+      provider: string;
+      model: string;
+      attemptCount: number;
+      retried: boolean;
+      durationMs: number;
+      finalStatus: string;
+    }): void;
+  };
 }
 
 export interface StructuredAiUsage {

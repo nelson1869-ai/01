@@ -6,7 +6,9 @@ export const MAX_CONTEXT_CHARACTERS = 16000;
 
 export const conversationIdSchema = z
   .string()
-  .regex(/^conv-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  .regex(
+    /^conv-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  )
   .max(64);
 
 export const assistantChatRequestSchema = z.strictObject({
@@ -46,7 +48,31 @@ export const assistantProviderStatusSchema = z.enum([
   "UNKNOWN_PROVIDER_FAILURE",
 ]);
 
-export type AssistantProviderStatus = z.infer<typeof assistantProviderStatusSchema>;
+export type AssistantProviderStatus = z.infer<
+  typeof assistantProviderStatusSchema
+>;
+
+export const aiStageTelemetrySchema = z.strictObject({
+  stage: z.string().min(1).max(128),
+  provider: z.string().min(1).max(64),
+  model: z.string().min(1).max(128),
+  attemptCount: z.number().int().min(1).max(2),
+  retried: z.boolean(),
+  durationMs: z.number().int().min(0),
+  finalStatus: assistantProviderStatusSchema,
+});
+
+export type AiStageTelemetry = z.infer<typeof aiStageTelemetrySchema>;
+
+export interface RequestAiTelemetry {
+  readonly totalDurationMs: number;
+  readonly ai: readonly AiStageTelemetry[];
+}
+
+export const requestAiTelemetrySchema = z.strictObject({
+  totalDurationMs: z.number().int().min(0),
+  ai: z.array(aiStageTelemetrySchema).readonly(),
+});
 
 export interface AssistantChatResponseData {
   readonly conversationId: string;
@@ -57,4 +83,5 @@ export interface AssistantChatResponseData {
   readonly executionId: string | null;
   readonly verification: z.infer<typeof assistantVerificationStatusSchema>;
   readonly decisionSummary: readonly string[];
+  readonly telemetry: RequestAiTelemetry;
 }

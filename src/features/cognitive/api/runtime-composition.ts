@@ -1,4 +1,7 @@
-import { ALLOWED_GITHUB_REPO, GitHubReadOnlyAdapter } from "../adapters/github/github-adapter";
+import {
+  ALLOWED_GITHUB_REPO,
+  GitHubReadOnlyAdapter,
+} from "../adapters/github/github-adapter";
 import type { OperationAdapter } from "../adapters/adapter-contract";
 import type { StructuredAiProvider } from "../ai/ai-provider-contract";
 import { GeminiStructuredAiProvider } from "../ai/gemini-provider";
@@ -33,8 +36,11 @@ import type { SupportedTaskProfile } from "./session-run-contracts";
 
 export class ServerPerception implements PerceptionPort {
   async perceive(cue: PersistedCueIngress): Promise<PerceptionResult> {
-    const payload = (cue.payload && typeof cue.payload === "object" ? cue.payload : {}) as Record<string, unknown>;
-    const requestedFile = typeof payload.path === "string" ? payload.path : "README.md";
+    const payload = (
+      cue.payload && typeof cue.payload === "object" ? cue.payload : {}
+    ) as Record<string, unknown>;
+    const requestedFile =
+      typeof payload.path === "string" ? payload.path : "README.md";
     return {
       summary: `Perceived task for ${cue.type}: ${cue.source}`,
       structuredFacts: {
@@ -75,15 +81,21 @@ export interface CognitiveRuntimeOptions {
   readonly defaultTimeoutMs?: number;
 }
 
+import { ReliableStructuredAiProvider } from "../ai/reliable-provider";
+
 export function createDefaultCognitivePorts(
   options: CognitiveRuntimeOptions = {},
 ): CognitiveCyclePorts {
-  const aiProvider =
+  const rawAiProvider =
     options.aiProvider ??
     new GeminiStructuredAiProvider({
       defaultModel: options.defaultModel ?? "gemini-3.7-flash",
       defaultTimeoutMs: options.defaultTimeoutMs ?? 30_000,
     });
+  const aiProvider =
+    rawAiProvider instanceof ReliableStructuredAiProvider
+      ? rawAiProvider
+      : new ReliableStructuredAiProvider(rawAiProvider);
 
   const adapter =
     options.adapter ??
@@ -125,7 +137,9 @@ export async function executeSessionCycle(
 ): Promise<ExecuteCycleResult> {
   const session = await sessionRepository.findSessionById(db, sessionId);
   if (!session) {
-    throw PersistenceError.notFound(`Cognitive session "${sessionId}" was not found.`);
+    throw PersistenceError.notFound(
+      `Cognitive session "${sessionId}" was not found.`,
+    );
   }
 
   // M8.2 Idle Rule: If a session is already IDLE, do not rerun its old cue.
@@ -134,7 +148,8 @@ export async function executeSessionCycle(
       result: {
         status: "NO_ACTION",
         sessionId,
-        reason: "Session is already in IDLE phase and complete. Create a new cue to start a new task.",
+        reason:
+          "Session is already in IDLE phase and complete. Create a new cue to start a new task.",
       },
       session,
     };

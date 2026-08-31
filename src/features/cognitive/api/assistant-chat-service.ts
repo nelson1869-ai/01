@@ -7,16 +7,40 @@ import type {
 import { AiProviderError, type AiErrorCode } from "../ai/ai-errors";
 import { assistantConversationRepository } from "../persistence/postgres/repositories/assistant-conversation-repository";
 import type { DatabaseClient } from "../persistence/postgres/transactions/transaction-executor";
-import type { AssistantIntentInterpreterPort, AssistantResponseComposerPort, SafeConversationTurn } from "./assistant-ai";
-import type { AssistantChatRequest, AssistantChatResponseData, AssistantProviderStatus } from "./assistant-chat-contracts";
-import { MAX_CONTEXT_CHARACTERS, MAX_CONTEXT_TURNS } from "./assistant-chat-contracts";
-import { deterministicDenialReason, redactAssistantMessage } from "./assistant-security";
+import type {
+  AssistantIntentInterpreterPort,
+  AssistantResponseComposerPort,
+  SafeConversationTurn,
+} from "./assistant-ai";
+import type {
+  AssistantChatRequest,
+  AssistantChatResponseData,
+  AssistantProviderStatus,
+} from "./assistant-chat-contracts";
+import {
+  MAX_CONTEXT_CHARACTERS,
+  MAX_CONTEXT_TURNS,
+} from "./assistant-chat-contracts";
+import {
+  deterministicDenialReason,
+  redactAssistantMessage,
+} from "./assistant-security";
 import type { AssistantToolRunnerPort } from "./assistant-tool-runtime";
 
 export interface AssistantConversationStorePort {
-  createConversation(conversationId: string, now: string): Promise<PersistedAssistantConversation>;
-  findConversation(conversationId: string): Promise<PersistedAssistantConversation | null>;
-  beginTurn(input: { turnId: string; conversationId: string; userMessage: string; createdAt: string }): Promise<PersistedAssistantTurn>;
+  createConversation(
+    conversationId: string,
+    now: string,
+  ): Promise<PersistedAssistantConversation>;
+  findConversation(
+    conversationId: string,
+  ): Promise<PersistedAssistantConversation | null>;
+  beginTurn(input: {
+    turnId: string;
+    conversationId: string;
+    userMessage: string;
+    createdAt: string;
+  }): Promise<PersistedAssistantTurn>;
   completeTurn(input: {
     turnId: string;
     kind: AssistantTurnKind;
@@ -29,30 +53,56 @@ export interface AssistantConversationStorePort {
     verificationId?: string | null;
     completedAt: string;
   }): Promise<PersistedAssistantTurn>;
-  recentTurns(conversationId: string, limit: number): Promise<PersistedAssistantTurn[]>;
+  recentTurns(
+    conversationId: string,
+    limit: number,
+  ): Promise<PersistedAssistantTurn[]>;
 }
 
 export class DatabaseAssistantConversationStore implements AssistantConversationStorePort {
   constructor(private readonly db: DatabaseClient) {}
   async createConversation(conversationId: string, now: string) {
-    await assistantConversationRepository.pruneExpiredConversations(this.db, now);
-    return assistantConversationRepository.createConversation(this.db, conversationId, now);
+    await assistantConversationRepository.pruneExpiredConversations(
+      this.db,
+      now,
+    );
+    return assistantConversationRepository.createConversation(
+      this.db,
+      conversationId,
+      now,
+    );
   }
   findConversation(conversationId: string) {
-    return assistantConversationRepository.findConversationById(this.db, conversationId);
+    return assistantConversationRepository.findConversationById(
+      this.db,
+      conversationId,
+    );
   }
-  beginTurn(input: { turnId: string; conversationId: string; userMessage: string; createdAt: string }) {
+  beginTurn(input: {
+    turnId: string;
+    conversationId: string;
+    userMessage: string;
+    createdAt: string;
+  }) {
     return assistantConversationRepository.beginTurn(this.db, input);
   }
-  completeTurn(input: Parameters<AssistantConversationStorePort["completeTurn"]>[0]) {
+  completeTurn(
+    input: Parameters<AssistantConversationStorePort["completeTurn"]>[0],
+  ) {
     return assistantConversationRepository.completeTurn(this.db, input);
   }
   recentTurns(conversationId: string, limit: number) {
-    return assistantConversationRepository.findRecentCompletedTurns(this.db, conversationId, limit);
+    return assistantConversationRepository.findRecentCompletedTurns(
+      this.db,
+      conversationId,
+      limit,
+    );
   }
 }
 
-function boundedContext(turns: readonly PersistedAssistantTurn[]): SafeConversationTurn[] {
+function boundedContext(
+  turns: readonly PersistedAssistantTurn[],
+): SafeConversationTurn[] {
   const selected: SafeConversationTurn[] = [];
   let remaining = MAX_CONTEXT_CHARACTERS;
   for (const turn of [...turns].reverse()) {
@@ -65,11 +115,12 @@ function boundedContext(turns: readonly PersistedAssistantTurn[]): SafeConversat
     selected.push({
       userMessage: user,
       assistantMessage: assistant,
-      verification: turn.kind === "DIRECT_ANSWER"
-        ? "NOT_REQUIRED"
-        : turn.status === "COMPLETED" && turn.verificationId
-          ? "VERIFIED"
-          : "UNVERIFIED",
+      verification:
+        turn.kind === "DIRECT_ANSWER"
+          ? "NOT_REQUIRED"
+          : turn.status === "COMPLETED" && turn.verificationId
+            ? "VERIFIED"
+            : "UNVERIFIED",
     });
     if (selected.length >= MAX_CONTEXT_TURNS || remaining <= 0) break;
   }
@@ -77,47 +128,63 @@ function boundedContext(turns: readonly PersistedAssistantTurn[]): SafeConversat
 }
 
 const PROVIDER_FAILURE_SUMMARIES: Readonly<Record<AiErrorCode, string>> = {
-  MISSING_CREDENTIAL: "The Gemini provider is not configured with a credential.",
+  MISSING_CREDENTIAL:
+    "The Gemini provider is not configured with a credential.",
   AUTHENTICATION_FAILED: "The Gemini provider could not authenticate.",
   RATE_LIMITED: "The Gemini provider is currently rate limited.",
   TIMEOUT: "The Gemini provider timed out.",
   PROVIDER_UNAVAILABLE: "The Gemini provider is currently unavailable.",
-  SAFETY_BLOCKED: "The Gemini provider blocked the request through its safety controls.",
-  INVALID_STRUCTURED_OUTPUT: "The Gemini provider returned an invalid structured response.",
-  RESPONSE_TOO_LARGE: "The Gemini provider response exceeded the safe size limit.",
-  UNKNOWN_PROVIDER_FAILURE: "The assistant encountered an unknown provider failure.",
+  SAFETY_BLOCKED:
+    "The Gemini provider blocked the request through its safety controls.",
+  INVALID_STRUCTURED_OUTPUT:
+    "The Gemini provider returned an invalid structured response.",
+  RESPONSE_TOO_LARGE:
+    "The Gemini provider response exceeded the safe size limit.",
+  UNKNOWN_PROVIDER_FAILURE:
+    "The assistant encountered an unknown provider failure.",
 };
 
 function safeProviderFailure(error: unknown): {
   readonly providerStatus: AssistantProviderStatus;
   readonly summary: string;
 } {
-  const code = error instanceof AiProviderError
-    ? error.code
-    : "UNKNOWN_PROVIDER_FAILURE";
+  const code =
+    error instanceof AiProviderError ? error.code : "UNKNOWN_PROVIDER_FAILURE";
   return {
     providerStatus: code,
     summary: PROVIDER_FAILURE_SUMMARIES[code],
   };
 }
 
-export class AssistantChatService {
-  constructor(private readonly dependencies: {
-    readonly store: AssistantConversationStorePort;
-    readonly interpreter: AssistantIntentInterpreterPort;
-    readonly composer: AssistantResponseComposerPort;
-    readonly toolRunner: AssistantToolRunnerPort;
-    readonly now?: () => string;
-  }) {}
+import { SimpleAiTelemetryCollector } from "../ai/reliable-provider";
 
-  async chat(request: AssistantChatRequest): Promise<AssistantChatResponseData> {
+export class AssistantChatService {
+  constructor(
+    private readonly dependencies: {
+      readonly store: AssistantConversationStorePort;
+      readonly interpreter: AssistantIntentInterpreterPort;
+      readonly composer: AssistantResponseComposerPort;
+      readonly toolRunner: AssistantToolRunnerPort;
+      readonly now?: () => string;
+    },
+  ) {}
+
+  async chat(
+    request: AssistantChatRequest,
+  ): Promise<AssistantChatResponseData> {
+    const startTime = Date.now();
+    const telemetryCollector = new SimpleAiTelemetryCollector();
     const now = this.dependencies.now?.() ?? new Date().toISOString();
-    const conversationId = request.conversationId ?? `conv-${crypto.randomUUID()}`;
+    const conversationId =
+      request.conversationId ?? `conv-${crypto.randomUUID()}`;
     if (!request.conversationId) {
       await this.dependencies.store.createConversation(conversationId, now);
     }
     const sanitizedMessage = redactAssistantMessage(request.message);
-    const priorTurns = await this.dependencies.store.recentTurns(conversationId, MAX_CONTEXT_TURNS);
+    const priorTurns = await this.dependencies.store.recentTurns(
+      conversationId,
+      MAX_CONTEXT_TURNS,
+    );
     const context = boundedContext(priorTurns);
     const turn = await this.dependencies.store.beginTurn({
       turnId: `turn-${crypto.randomUUID()}`,
@@ -126,7 +193,9 @@ export class AssistantChatService {
       createdAt: now,
     });
     let externalActionAttempted = false;
-    let completedTool: Awaited<ReturnType<AssistantToolRunnerPort["run"]>> | null = null;
+    let completedTool: Awaited<
+      ReturnType<AssistantToolRunnerPort["run"]>
+    > | null = null;
 
     const finish = async (input: {
       kind: AssistantTurnKind;
@@ -153,15 +222,23 @@ export class AssistantChatService {
         verificationId: input.verificationId,
         completedAt: now,
       });
+      const totalDurationMs = Date.now() - startTime;
       return {
         conversationId,
         message: safeMessage,
-        status: input.status === "CLARIFICATION_REQUIRED" ? "CLARIFICATION_REQUIRED" : input.status,
+        status:
+          input.status === "CLARIFICATION_REQUIRED"
+            ? "CLARIFICATION_REQUIRED"
+            : input.status,
         providerStatus: input.providerStatus ?? null,
         sessionId: input.sessionId ?? null,
         executionId: input.executionId ?? null,
         verification: input.verification,
         decisionSummary: input.decisionSummary,
+        telemetry: {
+          totalDurationMs,
+          ai: telemetryCollector.getStages(),
+        },
       };
     };
 
@@ -172,36 +249,129 @@ export class AssistantChatService {
         status: "DENIED",
         message: denial,
         verification: "NOT_REQUIRED",
-        decisionSummary: ["The request conflicts with the read-only policy.", "No external action was performed."],
+        decisionSummary: [
+          "The request conflicts with the read-only policy.",
+          "No external action was performed.",
+        ],
       });
     }
 
     try {
-      const intent = await this.dependencies.interpreter.interpret(sanitizedMessage, context);
+      const intent = await this.dependencies.interpreter.interpret(
+        sanitizedMessage,
+        context,
+        {
+          telemetryCollector,
+        },
+      );
       if (intent.kind === "DENIED") {
-        return finish({ kind: "DENIED", status: "DENIED", message: intent.response ?? "I can’t safely perform that request.", verification: "NOT_REQUIRED", decisionSummary: ["The request is not permitted by the current policy.", "No external action was performed."] });
+        return finish({
+          kind: "DENIED",
+          status: "DENIED",
+          message: intent.response ?? "I can’t safely perform that request.",
+          verification: "NOT_REQUIRED",
+          decisionSummary: [
+            "The request is not permitted by the current policy.",
+            "No external action was performed.",
+          ],
+        });
       }
       if (intent.kind === "CLARIFICATION") {
-        return finish({ kind: "CLARIFICATION", status: "CLARIFICATION_REQUIRED", message: intent.response ?? "I need more information before I can safely do that.", verification: "NOT_REQUIRED", decisionSummary: ["The request has more than one safe interpretation.", "No external action was performed."] });
+        return finish({
+          kind: "CLARIFICATION",
+          status: "CLARIFICATION_REQUIRED",
+          message:
+            intent.response ??
+            "I need more information before I can safely do that.",
+          verification: "NOT_REQUIRED",
+          decisionSummary: [
+            "The request has more than one safe interpretation.",
+            "No external action was performed.",
+          ],
+        });
       }
       if (intent.kind === "DIRECT_ANSWER") {
-        const message = await this.dependencies.composer.composeDirect(sanitizedMessage, context);
-        return finish({ kind: "DIRECT_ANSWER", status: "COMPLETED", message, verification: "NOT_REQUIRED", decisionSummary: ["The request does not require current external information.", "No external action was performed."] });
+        const message = await this.dependencies.composer.composeDirect(
+          sanitizedMessage,
+          context,
+          {
+            telemetryCollector,
+          },
+        );
+        return finish({
+          kind: "DIRECT_ANSWER",
+          status: "COMPLETED",
+          message,
+          verification: "NOT_REQUIRED",
+          decisionSummary: [
+            "The request does not require current external information.",
+            "No external action was performed.",
+          ],
+        });
       }
 
       externalActionAttempted = true;
-      const tool = await this.dependencies.toolRunner.run(intent, sanitizedMessage, now);
+      const tool = await this.dependencies.toolRunner.run(
+        intent,
+        sanitizedMessage,
+        now,
+      );
       completedTool = tool;
-      const links = { cueId: tool.cueId, sessionId: tool.sessionId, executionId: tool.executionId, verificationId: tool.verificationId };
+      const links = {
+        cueId: tool.cueId,
+        sessionId: tool.sessionId,
+        executionId: tool.executionId,
+        verificationId: tool.verificationId,
+      };
       if (tool.status === "VERIFIED" && tool.verifiedFacts) {
-        const message = await this.dependencies.composer.composeVerified({ message: sanitizedMessage, context, verifiedFacts: tool.verifiedFacts });
-        return finish({ ...links, kind: "TOOL_REQUIRED", status: "COMPLETED", message, verification: "VERIFIED", decisionSummary: ["The request requires current repository information.", "GitHub read access is allowed.", "The provider result was deterministically verified before answering."] });
+        const message = await this.dependencies.composer.composeVerified({
+          message: sanitizedMessage,
+          context,
+          verifiedFacts: tool.verifiedFacts,
+          options: { telemetryCollector },
+        });
+        return finish({
+          ...links,
+          kind: "TOOL_REQUIRED",
+          status: "COMPLETED",
+          message,
+          verification: "VERIFIED",
+          decisionSummary: [
+            "The request requires current repository information.",
+            "GitHub read access is allowed.",
+            "The provider result was deterministically verified before answering.",
+          ],
+        });
       }
       if (tool.status === "DENIED") {
-        return finish({ ...links, kind: "TOOL_REQUIRED", status: "DENIED", message: "I can’t perform that action with the current read-only GitHub policy.", verification: "NOT_REQUIRED", decisionSummary: ["The existing grounding or policy boundary did not authorize the action.", "No provider result was presented as fact."] });
+        return finish({
+          ...links,
+          kind: "TOOL_REQUIRED",
+          status: "DENIED",
+          message:
+            "I can’t perform that action with the current read-only GitHub policy.",
+          verification: "NOT_REQUIRED",
+          decisionSummary: [
+            "The existing grounding or policy boundary did not authorize the action.",
+            "No provider result was presented as fact.",
+          ],
+        });
       }
-      const verification = tool.status === "RECONCILIATION_REQUIRED" ? "RECONCILIATION_REQUIRED" : tool.status;
-      return finish({ ...links, kind: "TOOL_REQUIRED", status: "UNVERIFIED", message: "I couldn’t verify that result yet.", verification, decisionSummary: ["The tool result was not verified.", "No unverified provider content was presented as fact."] });
+      const verification =
+        tool.status === "RECONCILIATION_REQUIRED"
+          ? "RECONCILIATION_REQUIRED"
+          : tool.status;
+      return finish({
+        ...links,
+        kind: "TOOL_REQUIRED",
+        status: "UNVERIFIED",
+        message: "I couldn’t verify that result yet.",
+        verification,
+        decisionSummary: [
+          "The tool result was not verified.",
+          "No unverified provider content was presented as fact.",
+        ],
+      });
     } catch (error) {
       const failure = safeProviderFailure(error);
       return finish({

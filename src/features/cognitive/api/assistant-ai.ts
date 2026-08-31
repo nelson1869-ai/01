@@ -2,31 +2,50 @@ import { z } from "zod";
 import type { StructuredAiProvider } from "../ai/ai-provider-contract";
 import { SUPPORTED_M7_ACTIONS } from "../orchestration/gemini-candidate-generator";
 
-export const assistantIntentSchema = z.strictObject({
-  kind: z.enum(["DIRECT_ANSWER", "TOOL_REQUIRED", "CLARIFICATION", "DENIED"]),
-  action: z.enum(SUPPORTED_M7_ACTIONS).nullable(),
-  path: z.string().min(1).max(512).nullable(),
-  issueNumber: z.number().int().positive().max(2147483647).nullable(),
-  pullNumber: z.number().int().positive().max(2147483647).nullable(),
-  response: z.string().min(1).max(4000).nullable(),
-  goal: z.string().min(1).max(300),
-}).superRefine((value, context) => {
-  if (value.kind === "TOOL_REQUIRED" && value.action === null) {
-    context.addIssue({ code: "custom", path: ["action"], message: "Tool-required intent needs an action." });
-  }
-  if (value.kind !== "TOOL_REQUIRED" && value.action !== null) {
-    context.addIssue({ code: "custom", path: ["action"], message: "Only tool-required intent may select an action." });
-  }
-  if ((value.kind === "CLARIFICATION" || value.kind === "DENIED") && value.response === null) {
-    context.addIssue({ code: "custom", path: ["response"], message: "A safe response is required." });
-  }
-});
+export const assistantIntentSchema = z
+  .strictObject({
+    kind: z.enum(["DIRECT_ANSWER", "TOOL_REQUIRED", "CLARIFICATION", "DENIED"]),
+    action: z.enum(SUPPORTED_M7_ACTIONS).nullable(),
+    path: z.string().min(1).max(512).nullable(),
+    issueNumber: z.number().int().positive().max(2147483647).nullable(),
+    pullNumber: z.number().int().positive().max(2147483647).nullable(),
+    response: z.string().min(1).max(4000).nullable(),
+    goal: z.string().min(1).max(300),
+  })
+  .superRefine((value, context) => {
+    if (value.kind === "TOOL_REQUIRED" && value.action === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["action"],
+        message: "Tool-required intent needs an action.",
+      });
+    }
+    if (value.kind !== "TOOL_REQUIRED" && value.action !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["action"],
+        message: "Only tool-required intent may select an action.",
+      });
+    }
+    if (
+      (value.kind === "CLARIFICATION" || value.kind === "DENIED") &&
+      value.response === null
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["response"],
+        message: "A safe response is required.",
+      });
+    }
+  });
 
 export type AssistantIntent = z.infer<typeof assistantIntentSchema>;
 
 const composedResponseSchema = z.strictObject({
   message: z.string().trim().min(1).max(4000),
 });
+
+import type { AiTelemetryCollector } from "../ai/reliable-provider";
 
 export interface SafeConversationTurn {
   readonly userMessage: string;
@@ -35,29 +54,46 @@ export interface SafeConversationTurn {
 }
 
 export interface AssistantIntentInterpreterPort {
-  interpret(message: string, context: readonly SafeConversationTurn[]): Promise<AssistantIntent>;
+  interpret(
+    message: string,
+    context: readonly SafeConversationTurn[],
+    options?: { readonly telemetryCollector?: AiTelemetryCollector },
+  ): Promise<AssistantIntent>;
 }
 
 export interface AssistantResponseComposerPort {
-  composeDirect(message: string, context: readonly SafeConversationTurn[]): Promise<string>;
+  composeDirect(
+    message: string,
+    context: readonly SafeConversationTurn[],
+    options?: { readonly telemetryCollector?: AiTelemetryCollector },
+  ): Promise<string>;
   composeVerified(input: {
     readonly message: string;
     readonly context: readonly SafeConversationTurn[];
     readonly verifiedFacts: Readonly<Record<string, unknown>>;
+    readonly options?: { readonly telemetryCollector?: AiTelemetryCollector };
   }): Promise<string>;
 }
 
 function contextBlock(context: readonly SafeConversationTurn[]): string {
-  return context.map((turn, index) => [
-    `Turn ${index + 1} user: ${turn.userMessage}`,
-    `Turn ${index + 1} assistant (${turn.verification}): ${turn.assistantMessage}`,
-  ].join("\n")).join("\n");
+  return context
+    .map((turn, index) =>
+      [
+        `Turn ${index + 1} user: ${turn.userMessage}`,
+        `Turn ${index + 1} assistant (${turn.verification}): ${turn.assistantMessage}`,
+      ].join("\n"),
+    )
+    .join("\n");
 }
 
 export class GeminiAssistantIntentInterpreter implements AssistantIntentInterpreterPort {
   constructor(private readonly provider: StructuredAiProvider) {}
 
-  async interpret(message: string, context: readonly SafeConversationTurn[]): Promise<AssistantIntent> {
+  async interpret(
+    message: string,
+    context: readonly SafeConversationTurn[],
+    options?: { readonly telemetryCollector?: AiTelemetryCollector },
+  ): Promise<AssistantIntent> {
     const response = await this.provider.generateStructured({
       taskName: "assistant-intent",
       systemInstruction: [
@@ -70,18 +106,35 @@ export class GeminiAssistantIntentInterpreter implements AssistantIntentInterpre
       ].join("\n"),
       prompt: `<bounded_conversation_data>\n${contextBlock(context)}\n</bounded_conversation_data>\n<current_user_message>\n${message}\n</current_user_message>`,
       schema: assistantIntentSchema,
+      telemetryCollector: options?.telemetryCollector,
       jsonSchema: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["DIRECT_ANSWER", "TOOL_REQUIRED", "CLARIFICATION", "DENIED"] },
-          action: { anyOf: [{ type: "string", enum: [...SUPPORTED_M7_ACTIONS] }, { type: "null" }] },
+          kind: {
+            type: "string",
+            enum: ["DIRECT_ANSWER", "TOOL_REQUIRED", "CLARIFICATION", "DENIED"],
+          },
+          action: {
+            anyOf: [
+              { type: "string", enum: [...SUPPORTED_M7_ACTIONS] },
+              { type: "null" },
+            ],
+          },
           path: { anyOf: [{ type: "string" }, { type: "null" }] },
           issueNumber: { anyOf: [{ type: "integer" }, { type: "null" }] },
           pullNumber: { anyOf: [{ type: "integer" }, { type: "null" }] },
           response: { anyOf: [{ type: "string" }, { type: "null" }] },
           goal: { type: "string" },
         },
-        required: ["kind", "action", "path", "issueNumber", "pullNumber", "response", "goal"],
+        required: [
+          "kind",
+          "action",
+          "path",
+          "issueNumber",
+          "pullNumber",
+          "response",
+          "goal",
+        ],
       },
     });
     return response.value;
@@ -91,18 +144,33 @@ export class GeminiAssistantIntentInterpreter implements AssistantIntentInterpre
 export class GeminiAssistantResponseComposer implements AssistantResponseComposerPort {
   constructor(private readonly provider: StructuredAiProvider) {}
 
-  async composeDirect(message: string, context: readonly SafeConversationTurn[]): Promise<string> {
+  async composeDirect(
+    message: string,
+    context: readonly SafeConversationTurn[],
+    options?: { readonly telemetryCollector?: AiTelemetryCollector },
+  ): Promise<string> {
     const response = await this.provider.generateStructured({
       taskName: "assistant-direct-response",
-      systemInstruction: "Answer concisely and conversationally. Do not claim current external facts unless present in bounded context. Never reveal credentials, hidden reasoning, raw model output, or runtime authorization.",
+      systemInstruction:
+        "Answer concisely and conversationally. Do not claim current external facts unless present in bounded context. Never reveal credentials, hidden reasoning, raw model output, or runtime authorization.",
       prompt: `<bounded_conversation_data>\n${contextBlock(context)}\n</bounded_conversation_data>\n<current_user_message>\n${message}\n</current_user_message>`,
       schema: composedResponseSchema,
-      jsonSchema: { type: "object", properties: { message: { type: "string" } }, required: ["message"] },
+      telemetryCollector: options?.telemetryCollector,
+      jsonSchema: {
+        type: "object",
+        properties: { message: { type: "string" } },
+        required: ["message"],
+      },
     });
     return response.value.message;
   }
 
-  async composeVerified(input: { message: string; context: readonly SafeConversationTurn[]; verifiedFacts: Readonly<Record<string, unknown>> }): Promise<string> {
+  async composeVerified(input: {
+    message: string;
+    context: readonly SafeConversationTurn[];
+    verifiedFacts: Readonly<Record<string, unknown>>;
+    options?: { readonly telemetryCollector?: AiTelemetryCollector };
+  }): Promise<string> {
     const facts = JSON.stringify(input.verifiedFacts).slice(0, 12000);
     const response = await this.provider.generateStructured({
       taskName: "assistant-verified-response",
@@ -113,7 +181,12 @@ export class GeminiAssistantResponseComposer implements AssistantResponseCompose
       ].join("\n"),
       prompt: `<bounded_conversation_data>\n${contextBlock(input.context)}\n</bounded_conversation_data>\n<user_message>\n${input.message}\n</user_message>\n<verified_provider_facts>\n${facts}\n</verified_provider_facts>`,
       schema: composedResponseSchema,
-      jsonSchema: { type: "object", properties: { message: { type: "string" } }, required: ["message"] },
+      telemetryCollector: input.options?.telemetryCollector,
+      jsonSchema: {
+        type: "object",
+        properties: { message: { type: "string" } },
+        required: ["message"],
+      },
     });
     return response.value.message;
   }

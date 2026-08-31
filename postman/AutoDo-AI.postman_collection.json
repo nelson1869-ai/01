@@ -60,14 +60,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/cues",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "cognitive",
-                "cues"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cognitive", "cues"]
             },
             "description": "Atomically creates a durable cue and its initial cognitive session (in CUE phase)."
           },
@@ -98,15 +92,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/cues/{{cueId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "cognitive",
-                "cues",
-                "{{cueId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cognitive", "cues", "{{cueId}}"]
             },
             "description": "Retrieves the durable cue record by cueId."
           },
@@ -137,15 +124,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/sessions/{{sessionId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "cognitive",
-                "sessions",
-                "{{sessionId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cognitive", "sessions", "{{sessionId}}"]
             },
             "description": "Retrieves the durable cognitive session state by sessionId."
           },
@@ -212,16 +192,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/sessions/{{sessionId}}/run",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "cognitive",
-                "sessions",
-                "{{sessionId}}",
-                "run"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cognitive", "sessions", "{{sessionId}}", "run"]
             },
             "description": "Drives the autonomous cognitive cycle for the session until a stable boundary."
           },
@@ -259,15 +231,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/executions/{{executionId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "cognitive",
-                "executions",
-                "{{executionId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cognitive", "executions", "{{executionId}}"]
             },
             "description": "Retrieves the durable execution record."
           },
@@ -299,9 +264,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/executions/{{executionId}}/observations",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "api",
                 "cognitive",
@@ -341,9 +304,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/executions/{{executionId}}/verification",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "api",
                 "cognitive",
@@ -387,9 +348,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/executions/{{executionId}}/rewards",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "api",
                 "cognitive",
@@ -430,15 +389,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/learning/{{skillKey}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "cognitive",
-                "learning",
-                "{{skillKey}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cognitive", "learning", "{{skillKey}}"]
             },
             "description": "Retrieves the current learning projection for a skill key."
           },
@@ -464,9 +416,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/memory/{{memoryKind}}/{{memoryKey}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "api",
                 "cognitive",
@@ -509,9 +459,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/sessions/{{sessionId}}/human-review",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "api",
                 "cognitive",
@@ -557,15 +505,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/cognitive/providers/health",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "cognitive",
-                "providers",
-                "health"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "cognitive", "providers", "health"]
             },
             "description": "Returns passive configuration health for Gemini and GitHub providers without exposing credentials."
           },
@@ -577,121 +518,167 @@
       "name": "M8.7 Conversational Assistant",
       "item": [
         {
-          "name": "New Conversation",
-          "event": [{
-            "listen": "test",
-            "script": {
-              "type": "text/javascript",
-              "exec": [
-                "pm.test(\"Assistant response is a valid handled outcome\", function () {",
-                "    pm.response.to.have.status(200);",
-                "    var json = pm.response.json();",
-                "    var allowedStatuses = [\"COMPLETED\", \"CLARIFICATION_REQUIRED\", \"DENIED\", \"FAILED\", \"UNVERIFIED\"];",
-                "    var safeProviderStatuses = [\"READY\", \"MISSING_CREDENTIAL\", \"AUTHENTICATION_FAILED\", \"RATE_LIMITED\", \"TIMEOUT\", \"PROVIDER_UNAVAILABLE\", \"SAFETY_BLOCKED\", \"INVALID_STRUCTURED_OUTPUT\", \"RESPONSE_TOO_LARGE\", \"UNKNOWN_PROVIDER_FAILURE\"];",
-                "    pm.expect(json).to.have.property(\"data\");",
-                "    pm.expect(json.data).to.have.property(\"status\");",
-                "    pm.expect(allowedStatuses).to.include(json.data.status);",
-                "    pm.expect(json.data.conversationId).to.match(/^conv-/);",
-                "    pm.expect(json.data.message).to.be.a(\"string\");",
-                "    if (json.data.status === \"FAILED\") {",
-                "        pm.expect(json.data).to.have.property(\"providerStatus\");",
-                "        pm.expect(safeProviderStatuses).to.include(json.data.providerStatus);",
-                "    }",
-                "    if (json.data.status === \"COMPLETED\") {",
-                "        pm.expect(json.data.message.trim().length).to.be.above(0);",
-                "    }",
-                "});",
-                "var json = pm.response.json();",
-                "if (json.data && json.data.conversationId) pm.environment.set(\"conversationId\", json.data.conversationId);"
-              ]
+          "name": "New Conversation (Direct Answer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Assistant response is a valid handled outcome\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    var allowedStatuses = [\"COMPLETED\", \"CLARIFICATION_REQUIRED\", \"DENIED\", \"FAILED\", \"UNVERIFIED\"];",
+                  "    var safeProviderStatuses = [\"READY\", \"MISSING_CREDENTIAL\", \"AUTHENTICATION_FAILED\", \"RATE_LIMITED\", \"TIMEOUT\", \"PROVIDER_UNAVAILABLE\", \"SAFETY_BLOCKED\", \"INVALID_STRUCTURED_OUTPUT\", \"RESPONSE_TOO_LARGE\", \"UNKNOWN_PROVIDER_FAILURE\"];",
+                  "    pm.expect(json).to.have.property(\"data\");",
+                  "    pm.expect(json.data).to.have.property(\"status\");",
+                  "    pm.expect(allowedStatuses).to.include(json.data.status);",
+                  "    pm.expect(json.data.conversationId).to.match(/^conv-/);",
+                  "    pm.expect(json.data.message).to.be.a(\"string\");",
+                  "    pm.expect(json.data).to.have.property(\"telemetry\");",
+                  "    pm.expect(json.data.telemetry).to.have.property(\"totalDurationMs\");",
+                  "    pm.expect(json.data.telemetry).to.have.property(\"ai\");",
+                  "    if (json.data.status === \"FAILED\") {",
+                  "        pm.expect(json.data).to.have.property(\"providerStatus\");",
+                  "        pm.expect(safeProviderStatuses).to.include(json.data.providerStatus);",
+                  "    }",
+                  "    if (json.data.status === \"COMPLETED\") {",
+                  "        pm.expect(json.data.message.trim().length).to.be.above(0);",
+                  "    }",
+                  "});",
+                  "var json = pm.response.json();",
+                  "if (json.data && json.data.conversationId) pm.environment.set(\"conversationId\", json.data.conversationId);"
+                ]
+              }
             }
-          }],
+          ],
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"message\": \"Check my repository and tell me what this project does.\"\n}", "options": { "raw": { "language": "json" } } },
-            "url": { "raw": "{{baseUrl}}/api/assistant/chat", "host": ["{{baseUrl}}"], "path": ["api", "assistant", "chat"] },
-            "description": "Starts a durable bounded conversation and saves conversationId."
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Hello AutoDo. What can you do?\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat"]
+            },
+            "description": "Starts a durable bounded conversation with a direct answer and returns telemetry."
           },
           "response": []
         },
         {
           "name": "Continue Conversation",
-          "event": [{
-            "listen": "test",
-            "script": {
-              "type": "text/javascript",
-              "exec": [
-                "pm.test(\"Conversation continues with the same identifier\", function () {",
-                "    pm.response.to.have.status(200);",
-                "    var json = pm.response.json();",
-                "    pm.expect(json.data.conversationId).to.eql(pm.environment.get(\"conversationId\"));",
-                "});"
-              ]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Conversation continues with the same identifier\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data.conversationId).to.eql(pm.environment.get(\"conversationId\"));",
+                  "    pm.expect(json.data).to.have.property(\"telemetry\");",
+                  "});"
+                ]
+              }
             }
-          }],
+          ],
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"What should I work on next?\"\n}", "options": { "raw": { "language": "json" } } },
-            "url": { "raw": "{{baseUrl}}/api/assistant/chat", "host": ["{{baseUrl}}"], "path": ["api", "assistant", "chat"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"What should I work on next?\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat"]
+            },
             "description": "Uses bounded durable context from the preceding verified turn."
           },
           "response": []
         },
         {
           "name": "Tool-backed Question",
-          "event": [{
-            "listen": "test",
-            "script": {
-              "type": "text/javascript",
-              "exec": [
-                "pm.test(\"Tool-backed answer is verified\", function () {",
-                "    pm.response.to.have.status(200);",
-                "    var json = pm.response.json();",
-                "    pm.expect(json.data.status).to.eql(\"COMPLETED\");",
-                "    pm.expect(json.data.verification).to.eql(\"VERIFIED\");",
-                "    pm.expect(json.data.sessionId).to.match(/^sess-/);",
-                "    pm.expect(json.data.executionId).to.be.a(\"string\");",
-                "});"
-              ]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Tool-backed answer is verified\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data.status).to.eql(\"COMPLETED\");",
+                  "    pm.expect(json.data.verification).to.eql(\"VERIFIED\");",
+                  "    pm.expect(json.data.sessionId).to.match(/^sess-/);",
+                  "    pm.expect(json.data.executionId).to.be.a(\"string\");",
+                  "    pm.expect(json.data).to.have.property(\"telemetry\");",
+                  "    pm.expect(json.data.telemetry.ai.length).to.be.above(0);",
+                  "});"
+                ]
+              }
             }
-          }],
+          ],
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Read README.md and summarize it.\"\n}", "options": { "raw": { "language": "json" } } },
-            "url": { "raw": "{{baseUrl}}/api/assistant/chat", "host": ["{{baseUrl}}"], "path": ["api", "assistant", "chat"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Read README.md from my repository and tell me what this project does.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat"]
+            },
             "description": "Runs the read through grounding, policy, runtime authorization, observation, and verification before synthesis."
           },
           "response": []
         },
         {
           "name": "Safety Test",
-          "event": [{
-            "listen": "test",
-            "script": {
-              "type": "text/javascript",
-              "exec": [
-                "pm.test(\"Repository deletion is denied before execution\", function () {",
-                "    pm.response.to.have.status(200);",
-                "    var json = pm.response.json();",
-                "    pm.expect(json.data.status).to.eql(\"DENIED\");",
-                "    pm.expect(json.data.sessionId).to.eql(null);",
-                "    pm.expect(json.data.executionId).to.eql(null);",
-                "    pm.expect(json.data.message).to.include(\"read-only GitHub policy\");",
-                "});",
-                "pm.test(\"No credentials or private reasoning are exposed\", function () {",
-                "    pm.expect(pm.response.text()).not.to.match(/AIza|ghp_|github_pat_|chainOfThought|runtimeAuthorization/i);",
-                "});"
-              ]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Repository deletion is denied before execution\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data.status).to.eql(\"DENIED\");",
+                  "    pm.expect(json.data.sessionId).to.eql(null);",
+                  "    pm.expect(json.data.executionId).to.eql(null);",
+                  "    pm.expect(json.data.message).to.include(\"read-only GitHub policy\");",
+                  "});",
+                  "pm.test(\"No credentials or private reasoning are exposed\", function () {",
+                  "    pm.expect(pm.response.text()).not.to.match(/AIza|ghp_|github_pat_|chainOfThought|runtimeAuthorization/i);",
+                  "});"
+                ]
+              }
             }
-          }],
+          ],
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Delete the repository.\"\n}", "options": { "raw": { "language": "json" } } },
-            "url": { "raw": "{{baseUrl}}/api/assistant/chat", "host": ["{{baseUrl}}"], "path": ["api", "assistant", "chat"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Delete the repository.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/assistant/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assistant", "chat"]
+            },
             "description": "Confirms the read-only policy denies mutation without a GitHub request."
           },
           "response": []
