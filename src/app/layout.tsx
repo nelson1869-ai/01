@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AutoDo AI | Autonomous AI SaaS Platform",
-  description: "Production-grade autonomous AI SaaS platform.",
+  title: "AutoDo AI | Learning Console",
+  description:
+    "Explore AutoDo AI's verified cognitive cycle through live, durable server state.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -23,7 +24,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -14,6 +14,7 @@ import {
   type SafeConversationTurn,
   GeminiAssistantIntentInterpreter,
   GeminiAssistantResponseComposer,
+  extractDeterministicGitHubTarget,
 } from "./assistant-ai";
 import {
   MAX_CONTEXT_CHARACTERS,
@@ -215,6 +216,11 @@ export function isCrossProviderFallbackEligible(
   return false;
 }
 
+export type ActionOwnershipState =
+  | "PRE_DURABLE"
+  | "DURABLE_OWNERSHIP_STARTED"
+  | "EXTERNAL_DISPATCH_STARTED";
+
 export interface AssistantChatServiceDependencies {
   readonly store: AssistantConversationStorePort;
   readonly interpreter?: AssistantIntentInterpreterPort;
@@ -311,7 +317,7 @@ export class AssistantChatService {
     let activeModel: ModelIdentifier = routeDecision.selectedModel;
     let fallbackUsed = false;
 
-    let externalActionAttempted = false;
+    let ownershipState: ActionOwnershipState = "PRE_DURABLE";
     let completedTool: Awaited<
       ReturnType<AssistantToolRunnerPort["run"]>
     > | null = null;
@@ -616,8 +622,49 @@ export class AssistantChatService {
         });
       }
 
-      // 4. Tool Execution (Grounding, Policy, Auth, Adapter, Observation, Verification)
-      externalActionAttempted = true;
+      // 4. Validate intent target against deterministically extracted target
+      if (intent.kind === "TOOL_REQUIRED" && intent.action) {
+        const extracted = extractDeterministicGitHubTarget(sanitizedMessage);
+        if (intent.action === "github.issue.get") {
+          if (
+            extracted.issueNumber !== undefined &&
+            intent.issueNumber !== null &&
+            intent.issueNumber !== extracted.issueNumber
+          ) {
+            await emitter.emit({ stage: "CLARIFICATION_REQUIRED" });
+            return finish({
+              kind: "CLARIFICATION",
+              status: "CLARIFICATION_REQUIRED",
+              message: `Did you mean issue #${extracted.issueNumber}? Please clarify to proceed.`,
+              verification: "NOT_REQUIRED",
+              decisionSummary: [
+                `Extracted target issue #${extracted.issueNumber} mismatched intent issue #${intent.issueNumber}.`,
+                "No external action was performed.",
+              ],
+            });
+          }
+        } else if (intent.action === "github.pull_request.get") {
+          if (
+            extracted.pullNumber !== undefined &&
+            intent.pullNumber !== null &&
+            intent.pullNumber !== extracted.pullNumber
+          ) {
+            await emitter.emit({ stage: "CLARIFICATION_REQUIRED" });
+            return finish({
+              kind: "CLARIFICATION",
+              status: "CLARIFICATION_REQUIRED",
+              message: `Did you mean PR #${extracted.pullNumber}? Please clarify to proceed.`,
+              verification: "NOT_REQUIRED",
+              decisionSummary: [
+                `Extracted target PR #${extracted.pullNumber} mismatched intent PR #${intent.pullNumber}.`,
+                "No external action was performed.",
+              ],
+            });
+          }
+        }
+      }
+
+      // 5. Tool Execution (Grounding, Policy, Auth, Adapter, Observation, Verification)
       const tool = await this.dependencies.toolRunner.run(
         intent,
         sanitizedMessage,
@@ -625,18 +672,22 @@ export class AssistantChatService {
         {
           signal: options?.signal,
           onStage: async (stage) => {
-            if (stage === "TOOL_EXECUTION") {
+            if (stage === "PLANNING") {
+              ownershipState = "DURABLE_OWNERSHIP_STARTED";
+            } else if (stage === "TOOL_EXECUTION") {
+              ownershipState = "EXTERNAL_DISPATCH_STARTED";
               await emitter.emit({
                 stage: "TOOL_EXECUTION",
                 message: safeToolExecutionMessage(intent),
               });
-            } else {
-              await emitter.emit({ stage });
+              return;
             }
+            await emitter.emit({ stage });
           },
         },
       );
       completedTool = tool;
+      ownershipState = "EXTERNAL_DISPATCH_STARTED";
       const links = {
         cueId: tool.cueId,
         sessionId: tool.sessionId,
@@ -783,15 +834,16 @@ export class AssistantChatService {
             kind: completedTool ? "TOOL_REQUIRED" : "DIRECT_ANSWER",
             status: "FAILED",
             assistantMessage: "Request canceled by caller.",
-            decisionSummary: externalActionAttempted
-              ? [
-                  "The request was canceled by the caller.",
-                  "Durable external action state was preserved.",
-                ]
-              : [
-                  "The request was canceled by the caller.",
-                  "No external action was performed.",
-                ],
+            decisionSummary:
+              ownershipState === "PRE_DURABLE"
+                ? [
+                    "The request was canceled by the caller.",
+                    "No external action was performed.",
+                  ]
+                : [
+                    "The request was canceled by the caller.",
+                    "Durable external action state was preserved.",
+                  ],
             cueId: completedTool?.cueId ?? null,
             sessionId: completedTool?.sessionId ?? null,
             executionId: completedTool?.executionId ?? null,
@@ -808,12 +860,13 @@ export class AssistantChatService {
       }
       await emitter.emit({ stage: "FAILED" });
       const failure = safeProviderFailure(error);
-      const decisionSummary = externalActionAttempted
-        ? [
-            failure.summary,
-            "No unverified provider result was presented as fact.",
-          ]
-        : [failure.summary, "No external action was performed."];
+      const decisionSummary =
+        ownershipState !== "PRE_DURABLE"
+          ? [
+              failure.summary,
+              "No unverified provider result was presented as fact.",
+            ]
+          : [failure.summary, "No external action was performed."];
 
       return finish({
         kind: "DIRECT_ANSWER",

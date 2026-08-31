@@ -2,6 +2,54 @@ import { z } from "zod";
 import type { StructuredAiProvider } from "../ai/ai-provider-contract";
 import { SUPPORTED_M7_ACTIONS } from "../orchestration/gemini-candidate-generator";
 
+export function extractDeterministicGitHubTarget(message: string): {
+  readonly issueNumber?: number;
+  readonly pullNumber?: number;
+  readonly path?: string;
+  readonly actionHint?: string;
+} {
+  let issueNumber: number | undefined;
+  let pullNumber: number | undefined;
+  let path: string | undefined;
+
+  const prMatch = message.match(/\b(?:pull\s*request|pr)\s*(?:#|\s+)?(\d+)\b/i);
+  if (prMatch) {
+    pullNumber = parseInt(prMatch[1], 10);
+  }
+
+  const issueMatch = message.match(/\b(?:issue\s*(?:#|\s+)?|#)(\d+)\b/i);
+  if (issueMatch && !prMatch) {
+    issueNumber = parseInt(issueMatch[1], 10);
+  }
+
+  const pathMatch =
+    message.match(
+      /\b(?:file|path|read|inspect|contents?|from|in)\s+([a-zA-Z0-9_./-]+\.[a-zA-Z0-9_-]+)\b/i,
+    ) ?? message.match(/\b([a-zA-Z0-9_/-]+\.[a-zA-Z0-9_-]+)\b/i);
+  if (pathMatch) {
+    path = pathMatch[1];
+  } else if (/\breadme(?:\.md)?\b/i.test(message)) {
+    path = "README.md";
+  } else if (/\bpackage\.json\b/i.test(message)) {
+    path = "package.json";
+  } else if (/\blicense\b/i.test(message)) {
+    path = "LICENSE";
+  } else if (/\btsconfig(?:\.json)?\b/i.test(message)) {
+    path = "tsconfig.json";
+  }
+
+  let actionHint: string | undefined;
+  if (pullNumber !== undefined) {
+    actionHint = "github.pull_request.get";
+  } else if (issueNumber !== undefined) {
+    actionHint = "github.issue.get";
+  } else if (path !== undefined) {
+    actionHint = "github.contents.read";
+  }
+
+  return { issueNumber, pullNumber, path, actionHint };
+}
+
 export const assistantIntentSchema = z
   .strictObject({
     kind: z.enum(["DIRECT_ANSWER", "TOOL_REQUIRED", "CLARIFICATION", "DENIED"]),
@@ -13,12 +61,47 @@ export const assistantIntentSchema = z
     goal: z.string().min(1).max(300),
   })
   .superRefine((value, context) => {
-    if (value.kind === "TOOL_REQUIRED" && value.action === null) {
-      context.addIssue({
-        code: "custom",
-        path: ["action"],
-        message: "Tool-required intent needs an action.",
-      });
+    if (value.kind === "TOOL_REQUIRED") {
+      if (value.action === null) {
+        context.addIssue({
+          code: "custom",
+          path: ["action"],
+          message: "Tool-required intent needs an action.",
+        });
+      } else {
+        if (
+          value.action === "github.issue.get" &&
+          (value.issueNumber === null || value.issueNumber <= 0)
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["issueNumber"],
+            message:
+              "github.issue.get requires an explicit positive issueNumber.",
+          });
+        }
+        if (
+          value.action === "github.pull_request.get" &&
+          (value.pullNumber === null || value.pullNumber <= 0)
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["pullNumber"],
+            message:
+              "github.pull_request.get requires an explicit positive pullNumber.",
+          });
+        }
+        if (
+          value.action === "github.contents.read" &&
+          (value.path === null || value.path.trim().length === 0)
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["path"],
+            message: "github.contents.read requires an explicit path.",
+          });
+        }
+      }
     }
     if (value.kind !== "TOOL_REQUIRED" && value.action !== null) {
       context.addIssue({

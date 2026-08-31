@@ -8,6 +8,10 @@ import {
 } from "../persistence/postgres/repositories/learning-repository";
 import type { DatabaseClient } from "../persistence/postgres/transactions/transaction-executor";
 import { retrieveMemoryHeadsBatch } from "./memory-retrieval-orchestrator";
+import {
+  type GitHubTargetSpec,
+  gitHubTargetSpecSchema,
+} from "../domain/target-spec";
 
 import { assertDataSecurity } from "../security/secret-safety";
 
@@ -30,6 +34,7 @@ export interface AssembledCognitiveContext {
   readonly cue: PersistedCueIngress;
   readonly session: PersistedCognitiveSession;
   readonly perception: PerceptionResult;
+  readonly targetSpec: GitHubTargetSpec;
   readonly verifiedMemories: readonly PersistedVerifiedMemory[];
   readonly learningState: PersistedLearningState;
   readonly metadata: Readonly<Record<string, unknown>>;
@@ -39,6 +44,7 @@ export interface AssembleContextParams {
   readonly session: PersistedCognitiveSession;
   readonly cue: PersistedCueIngress;
   readonly perception: PerceptionResult;
+  readonly targetSpec: GitHubTargetSpec;
   readonly skillKey: string;
   readonly memoryRequests?: readonly MemoryHeadRequest[];
   readonly metadata?: Readonly<Record<string, unknown>>;
@@ -48,8 +54,9 @@ export async function assembleCognitiveContext(
   db: DatabaseClient,
   params: AssembleContextParams,
 ): Promise<AssembledCognitiveContext> {
-  // 1. Validate security of incoming perception and metadata
+  // 1. Validate security of incoming perception, targetSpec, and metadata
   assertContextSecurity(params.perception);
+  const validatedTargetSpec = gitHubTargetSpecSchema.parse(params.targetSpec);
   if (params.metadata) {
     assertContextSecurity(params.metadata);
   }
@@ -78,6 +85,7 @@ export async function assembleCognitiveContext(
     cue: params.cue,
     session: params.session,
     perception: params.perception,
+    targetSpec: validatedTargetSpec,
     verifiedMemories,
     learningState,
     metadata: params.metadata ?? {},

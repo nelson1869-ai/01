@@ -49,11 +49,23 @@ const T0 = "2026-08-31T05:00:00.000Z";
 
 class DeterministicPerception implements PerceptionPort {
   async perceive(cue: PersistedCueIngress): Promise<PerceptionResult> {
+    const payload = (
+      cue.payload && typeof cue.payload === "object" ? cue.payload : {}
+    ) as Record<string, unknown>;
+    const path = typeof payload.path === "string" ? payload.path : "README.md";
+    const action =
+      typeof payload.requestedAction === "string"
+        ? payload.requestedAction
+        : typeof payload.action === "string"
+          ? payload.action
+          : "github.contents.read";
     return {
       summary: `Perceived task: ${cue.type}`,
       structuredFacts: {
+        action,
         targetRepo: ALLOWED_GITHUB_REPO,
-        requestedFile: "README.md",
+        path,
+        requestedFile: path,
       },
       perceivedAt: T0,
     };
@@ -486,10 +498,11 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
       );
 
       expect(result.status).not.toBe("COMPLETED");
-      const latestExec = await executionRepository.findLatestExecutionBySessionId(
-        context.db,
-        testSessionId,
-      );
+      const latestExec =
+        await executionRepository.findLatestExecutionBySessionId(
+          context.db,
+          testSessionId,
+        );
       expect(latestExec).not.toBeNull();
       const obs = await observationRepository.findManyObservationsByExecutionId(
         context.db,

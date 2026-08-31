@@ -6,7 +6,10 @@ import type {
   PerceptionPort,
 } from "../orchestration/cognitive-ports";
 import type { CognitiveCyclePorts } from "../orchestration/cognitive-loop-driver";
-import type { PerceptionResult } from "../orchestration/context-assembler";
+import type {
+  AssembledCognitiveContext,
+  PerceptionResult,
+} from "../orchestration/context-assembler";
 import { createCanonicalFingerprint } from "../persistence/postgres/utils/canonical-fingerprint";
 import type { PersistedCueIngress } from "../persistence/contracts/cue-ingress";
 import type { DatabaseClient } from "../persistence/postgres/transactions/transaction-executor";
@@ -67,9 +70,9 @@ class AssistantPerception implements PerceptionPort {
       summary: `Assistant requested ${this.intent.action ?? "no operation"} on the locked repository.`,
       structuredFacts: {
         targetRepo: ALLOWED_GITHUB_REPO,
-        requestedFile: this.intent.path ?? "README.md",
-        issueNumber: this.intent.issueNumber,
-        pullNumber: this.intent.pullNumber,
+        path: this.intent.path ?? undefined,
+        issueNumber: this.intent.issueNumber ?? undefined,
+        pullNumber: this.intent.pullNumber ?? undefined,
       },
       perceivedAt: cue.receivedAt,
     };
@@ -104,26 +107,52 @@ class AssistantOperationRequestBuilder implements OperationRequestBuilderPort {
     candidate: PersistedCandidateAction,
     _plan: PersistedActionPlan,
     _step: PlanStepProposal,
+    context?: AssembledCognitiveContext,
   ): BuiltOperationRequest {
     void _plan;
     void _step;
     const operationKind = candidate.action;
+    const target = context?.targetSpec;
     const request: Record<string, unknown> = {
       repository: ALLOWED_GITHUB_REPO,
     };
     if (operationKind === "github.contents.read") {
-      request.path = this.intent.path ?? "README.md";
+      const path = target?.kind === "FILE" ? target.path : this.intent.path;
+      if (!path) {
+        throw new Error("Missing path for github.contents.read");
+      }
+      request.path = path;
       request.ref = "main";
     } else if (operationKind === "github.issue.get") {
-      request.issueNumber = this.intent.issueNumber ?? 1;
+      const num =
+        target?.kind === "ISSUE" ? target.issueNumber : this.intent.issueNumber;
+      if (!num) {
+        throw new Error("Missing issueNumber for github.issue.get");
+      }
+      request.issueNumber = num;
     } else if (operationKind === "github.pull_request.get") {
-      request.pullNumber = this.intent.pullNumber ?? 1;
+      const num =
+        target?.kind === "PULL_REQUEST"
+          ? target.pullNumber
+          : this.intent.pullNumber;
+      if (!num) {
+        throw new Error("Missing pullNumber for github.pull_request.get");
+      }
+      request.pullNumber = num;
     } else if (
       operationKind === "github.issues.list" ||
       operationKind === "github.pull_requests.list"
     ) {
-      request.state = "open";
-      request.perPage = 10;
+      request.state =
+        (target &&
+        (target.kind === "ISSUE_LIST" || target.kind === "PULL_REQUEST_LIST")
+          ? target.state
+          : "open") ?? "open";
+      request.perPage =
+        (target &&
+        (target.kind === "ISSUE_LIST" || target.kind === "PULL_REQUEST_LIST")
+          ? target.perPage
+          : 10) ?? 10;
     }
     return {
       operationKind,
@@ -191,6 +220,12 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
       throw new DOMException("The operation was aborted.", "AbortError");
     }
     await options?.onStage?.("SAFETY_CHECK");
+
+    // Re-check abort signal right before crossing into durable persistence
+    if (options?.signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
     const cueId = `cue-${crypto.randomUUID()}`;
     const sessionId = `sess-${crypto.randomUUID()}`;
     const cue: PersistedCueIngress = {
@@ -234,7 +269,7 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
         status: "RECONCILIATION_REQUIRED",
         sessionId,
         cueId,
-        executionId: cycle.executionId,
+        executionId: cycle.executionId ?? null,
         verificationId: null,
         verifiedFacts: null,
         reason: cycle.reason,

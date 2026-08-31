@@ -137,6 +137,14 @@ describe("Opt-in Real External Smoke Tests for Milestone 7 (Gemini + GitHub)", (
         },
         perceivedAt: new Date().toISOString(),
       },
+      targetSpec: {
+        kind: "ISSUE_LIST" as const,
+        repository: ALLOWED_GITHUB_REPO,
+        owner: "nelson1869-ai",
+        repo: "01",
+        state: "open" as const,
+        perPage: 30,
+      },
       verifiedMemories: [],
       learningState: {
         skillKey: "github.issues.list",

@@ -23,7 +23,9 @@ import {
 import { beginAuthorizedOperationAttempt } from "./execution-progress-orchestrator";
 
 export interface DispatchAuthorizedOperationResult<
-  TResult extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>,
+  TResult extends Readonly<Record<string, unknown>> = Readonly<
+    Record<string, unknown>
+  >,
 > {
   readonly isReplay: boolean;
   readonly operation: PersistedExecutionOperation;
@@ -32,8 +34,12 @@ export interface DispatchAuthorizedOperationResult<
 }
 
 export async function dispatchAuthorizedOperation<
-  TRequest extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>,
-  TResult extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>,
+  TRequest extends Readonly<Record<string, unknown>> = Readonly<
+    Record<string, unknown>
+  >,
+  TResult extends Readonly<Record<string, unknown>> = Readonly<
+    Record<string, unknown>
+  >,
 >(
   db: DatabaseClient,
   authorization: ExecutionSafetyState,
@@ -57,23 +63,19 @@ export async function dispatchAuthorizedOperation<
   );
 
   // 2. TRANSACTION A: Move PENDING -> IN_FLIGHT and record attempt #1 IN_FLIGHT (commits before external call)
-  const beginResult = await beginAuthorizedOperationAttempt(
-    db,
-    authorization,
-    {
-      commandIdempotencyKey: command.commandIdempotencyKey,
-      attemptId: command.attemptId,
-      operationId: command.operationId,
-      executionId: command.executionId,
-      sessionId: command.sessionId,
-      planId: command.planId,
-      stepId: command.stepId,
-      expectedOperationRowVersion: command.expectedOperationRowVersion,
-      expectedSafetyGeneration: command.expectedSafetyGeneration,
-      workerId: command.workerId,
-      startedAt: command.startedAt,
-    },
-  );
+  const beginResult = await beginAuthorizedOperationAttempt(db, authorization, {
+    commandIdempotencyKey: command.commandIdempotencyKey,
+    attemptId: command.attemptId,
+    operationId: command.operationId,
+    executionId: command.executionId,
+    sessionId: command.sessionId,
+    planId: command.planId,
+    stepId: command.stepId,
+    expectedOperationRowVersion: command.expectedOperationRowVersion,
+    expectedSafetyGeneration: command.expectedSafetyGeneration,
+    workerId: command.workerId,
+    startedAt: command.startedAt,
+  });
 
   if (beginResult.isReplay) {
     // If the begin-attempt was already committed (e.g. duplicate caller or prior crashed attempt),
@@ -103,14 +105,16 @@ export async function dispatchAuthorizedOperation<
               outcome: "INDETERMINATE",
               providerOperationId: beginResult.operation.providerOperationId,
               uncertaintyReason:
-                beginResult.operation.uncertaintyReason ?? "Operation previously marked UNKNOWN.",
+                beginResult.operation.uncertaintyReason ??
+                "Operation previously marked UNKNOWN.",
               category: "INDETERMINATE_PROVIDER_STATE",
               finishedAt: beginResult.operation.updatedAt,
             }
       : {
           outcome: "INDETERMINATE",
           providerOperationId: beginResult.operation.providerOperationId,
-          uncertaintyReason: "Operation attempt is already in-flight from a prior dispatch.",
+          uncertaintyReason:
+            "Operation attempt is already in-flight from a prior dispatch.",
           category: "INDETERMINATE_PROVIDER_STATE",
           finishedAt: beginResult.attempt.startedAt,
         };
@@ -159,6 +163,13 @@ export async function dispatchAuthorizedOperation<
 
   switch (dispatchResult.outcome) {
     case "CONFIRMED_SUCCESS": {
+      const rawMetadata =
+        dispatchResult.result ?? dispatchResult.metadata ?? null;
+      const cleanMetadata =
+        rawMetadata !== null
+          ? (JSON.parse(JSON.stringify(rawMetadata)) as JSONObject)
+          : null;
+
       const outcome = await recordOperationSucceeded(db, {
         commandIdempotencyKey: outcomeCommandKey,
         operationId: command.operationId,
@@ -166,10 +177,7 @@ export async function dispatchAuthorizedOperation<
         expectedOperationRowVersion: rowVersionForOutcome,
         outcome: "SUCCEEDED",
         providerOperationId: dispatchResult.providerOperationId ?? null,
-        resultMetadata:
-          ((dispatchResult.result ?? dispatchResult.metadata ?? null) as
-            | JSONObject
-            | null) ?? null,
+        resultMetadata: cleanMetadata,
         finishedAt: dispatchResult.finishedAt,
       });
       outcomeOperation = outcome.operation;

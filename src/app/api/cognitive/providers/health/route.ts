@@ -22,20 +22,20 @@ export async function GET() {
       ollama: {
         provider: "ollama",
         model: "qwen3.5:9b",
-        status: "READY",
+        status: "NOT_PROBED",
       },
       gemini: {
         configured: isGeminiConfigured,
         provider: "gemini",
         models: ["gemini-3.5-flash-lite", "gemini-3.7-flash"],
-        status: isGeminiConfigured ? "READY" : "UNCONFIGURED",
+        status: isGeminiConfigured ? "CONFIGURED" : "UNCONFIGURED",
       },
       github: {
         configured: isGithubConfigured,
         provider: "github",
         mode: "READ_ONLY",
         allowedRepository: ALLOWED_GITHUB_REPO,
-        status: isGithubConfigured ? "READY" : "UNCONFIGURED",
+        status: isGithubConfigured ? "CONFIGURED" : "UNCONFIGURED",
       },
     });
   } catch (error) {

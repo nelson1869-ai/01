@@ -28,12 +28,14 @@ import { planRepository } from "../persistence/postgres/repositories/plan-reposi
 import { policyRepository } from "../persistence/postgres/repositories/policy-repository";
 import { safetyRepository } from "../persistence/postgres/repositories/safety-repository";
 import { sessionRepository } from "../persistence/postgres/repositories/session-repository";
+import { executionStepRepository } from "../persistence/postgres/repositories/execution-step-repository";
 import { verificationRepository } from "../persistence/postgres/repositories/verification-repository";
 import { persistFailureRecovery } from "../persistence/postgres/transactions/persist-failure-recovery";
 import { createCanonicalFingerprint } from "../persistence/postgres/utils/canonical-fingerprint";
 import type { DatabaseClient } from "../persistence/postgres/transactions/transaction-executor";
 import {
   parseGitHubTargetSpec,
+  gitHubTargetSpecSchema,
   type GitHubTargetSpec,
 } from "../domain/target-spec";
 import { assertDataSecurity } from "../security/secret-safety";
@@ -60,6 +62,12 @@ import {
   startAuthorizedExecution,
   startAuthorizedExecutionStep,
 } from "./execution-progress-orchestrator";
+import {
+  completeExecutionStep,
+  failExecutionStep,
+  finalizeExecutionIfComplete,
+  finalizeExecutionFailure,
+} from "./execution-outcome-orchestrator";
 import { admitVerifiedMemory } from "./memory-orchestrator";
 import { recordObservation } from "./observation-orchestrator";
 import {
@@ -88,6 +96,13 @@ export type CognitiveCycleResult =
       readonly reason: string;
     }
   | {
+      readonly status: "RECONCILIATION_REQUIRED";
+      readonly sessionId: string;
+      readonly executionId?: string;
+      readonly operationId?: string;
+      readonly reason: string;
+    }
+  | {
       readonly status: "HUMAN_REVIEW_REQUIRED";
       readonly sessionId: string;
       readonly reason: string;
@@ -96,21 +111,8 @@ export type CognitiveCycleResult =
   | {
       readonly status: "COOLDOWN";
       readonly sessionId: string;
-      readonly cooldownUntil: string;
+      readonly cooldownUntil: string | null;
       readonly remainingMs: number;
-    }
-  | {
-      readonly status: "RECONCILIATION_REQUIRED";
-      readonly sessionId: string;
-      readonly executionId: string;
-      readonly operationId: string;
-      readonly reason: string;
-    }
-  | {
-      readonly status: "RETRY_REQUIRED";
-      readonly sessionId: string;
-      readonly retryCount: number;
-      readonly reason: string;
     }
   | {
       readonly status: "BLOCKED";
@@ -120,12 +122,16 @@ export type CognitiveCycleResult =
   | {
       readonly status: "FAILED";
       readonly sessionId: string;
-      readonly reason: string;
       readonly executionId?: string;
-      readonly verificationId?: string;
-      readonly rewardEventId?: string;
-      readonly memoriesAdmitted?: number;
+      readonly reason: string;
     };
+
+export interface AdvanceCycleOutcome {
+  readonly isBoundary: boolean;
+  readonly cycleResult?: CognitiveCycleResult;
+  readonly nextSession: PersistedCognitiveSession;
+  readonly runtimeAuthorization?: AllowedExecutionSafetyState;
+}
 
 export interface CognitiveCyclePorts {
   readonly perception: PerceptionPort;
@@ -143,6 +149,7 @@ export interface AdvanceCycleOptions {
   readonly skillKey: string;
   readonly memoryRequests?: readonly MemoryHeadRequest[];
   readonly now?: string;
+  readonly runtimeAuthorization?: AllowedExecutionSafetyState;
 }
 
 export interface SingleTransitionResult {
@@ -167,13 +174,16 @@ async function getOrComputePerceptionSnapshot(
     );
 
   if (existing) {
-    const targetSpec =
-      (existing.targetSpec as GitHubTargetSpec | null) ??
-      parseGitHubTargetSpec(
-        (existing.structuredFacts?.action as string) || "",
-        existing.summary,
-        existing.structuredFacts,
-      );
+    const targetSpec = existing.targetSpec
+      ? gitHubTargetSpecSchema.parse(existing.targetSpec)
+      : parseGitHubTargetSpec(
+          (existing.structuredFacts?.action as string) ||
+            ((cue.payload as Record<string, unknown>)
+              ?.requestedAction as string) ||
+            "github.repo.get",
+          existing.summary,
+          existing.structuredFacts,
+        );
     return {
       perception: {
         summary: existing.summary,
@@ -188,8 +198,13 @@ async function getOrComputePerceptionSnapshot(
   const rawPerception = await perceptionPort.perceive(cue);
   assertDataSecurity(rawPerception, "perception");
 
+  const action =
+    (rawPerception.structuredFacts?.action as string) ||
+    ((cue.payload as Record<string, unknown>)?.requestedAction as string) ||
+    "github.repo.get";
+
   const targetSpec = parseGitHubTargetSpec(
-    (rawPerception.structuredFacts?.action as string) || "",
+    action,
     rawPerception.summary,
     rawPerception.structuredFacts,
   );
@@ -229,6 +244,7 @@ export async function advanceCognitiveCycle(
   runtimeAuthorization?: AllowedExecutionSafetyState,
 ): Promise<SingleTransitionResult> {
   const now = options.now ?? new Date().toISOString();
+  const effectiveAuth = runtimeAuthorization ?? options.runtimeAuthorization;
 
   // 1. Load authoritative session state
   const session = await sessionRepository.findSessionById(db, sessionId);
@@ -238,16 +254,28 @@ export async function advanceCognitiveCycle(
     );
   }
 
-  // Check safety state for unrecoverable BLOCKED
+  // Check safety state: allow pure cognition phases even if safety is BLOCKED
   const safety = await safetyRepository.findSafetyStateBySessionId(
     db,
     sessionId,
   );
+  const isPureCognitionPhase =
+    session.phase === "CUE" ||
+    session.phase === "PERCEIVE" ||
+    session.phase === "BUILD_CONTEXT" ||
+    session.phase === "RETRIEVE_MEMORY" ||
+    session.phase === "GENERATE_CANDIDATES" ||
+    session.phase === "SCORE" ||
+    session.phase === "GROUND_VERIFY" ||
+    session.phase === "POLICY_SAFETY" ||
+    session.phase === "COOLDOWN" ||
+    session.phase === "HUMAN_REVIEW";
+
   if (
     safety &&
     safety.status === "BLOCKED" &&
-    session.phase !== "COOLDOWN" &&
-    session.phase !== "HUMAN_REVIEW"
+    !isPureCognitionPhase &&
+    !effectiveAuth
   ) {
     return {
       isBoundary: true,
@@ -268,21 +296,27 @@ export async function advanceCognitiveCycle(
           cycleResult: {
             status: "NO_ACTION",
             sessionId,
-            reason: "Session is IDLE with no cue attached.",
+            reason: "Session has no pending cue.",
           },
           nextSession: session,
         };
       }
-      const updated = await transitionSessionPhase(
-        db,
-        session,
-        "PERCEIVE",
-        now,
-      );
+      const updated = await transitionSessionPhase(db, session, "CUE", now);
       return { isBoundary: false, nextSession: updated };
     }
 
     case "CUE": {
+      if (!session.cueId) {
+        throw PersistenceError.invalidPersistedState(
+          "Session in CUE phase is missing cueId.",
+        );
+      }
+      const cue = await cueRepository.findCueById(db, session.cueId);
+      if (!cue) {
+        throw PersistenceError.notFound(
+          `Cue "${session.cueId}" was not found for session "${sessionId}".`,
+        );
+      }
       const updated = await transitionSessionPhase(
         db,
         session,
@@ -295,7 +329,7 @@ export async function advanceCognitiveCycle(
     case "PERCEIVE": {
       if (!session.cueId) {
         throw PersistenceError.invalidPersistedState(
-          `Session in PERCEIVE phase is missing cueId.`,
+          "Session in PERCEIVE phase is missing cueId.",
         );
       }
       const cue = await cueRepository.findCueById(db, session.cueId);
@@ -344,7 +378,7 @@ export async function advanceCognitiveCycle(
 
     case "RETRIEVE_MEMORY": {
       const cue = await getRequiredCue(db, session);
-      const { perception } = await getOrComputePerceptionSnapshot(
+      const { perception, targetSpec } = await getOrComputePerceptionSnapshot(
         db,
         session,
         cue,
@@ -356,6 +390,7 @@ export async function advanceCognitiveCycle(
         session,
         cue,
         perception,
+        targetSpec,
         skillKey: options.skillKey,
         memoryRequests: options.memoryRequests,
       });
@@ -385,7 +420,7 @@ export async function advanceCognitiveCycle(
         return { isBoundary: false, nextSession: updated };
       }
 
-      const { perception } = await getOrComputePerceptionSnapshot(
+      const { perception, targetSpec } = await getOrComputePerceptionSnapshot(
         db,
         session,
         cue,
@@ -396,6 +431,7 @@ export async function advanceCognitiveCycle(
         session,
         cue,
         perception,
+        targetSpec,
         skillKey: options.skillKey,
         memoryRequests: options.memoryRequests,
       });
@@ -462,7 +498,7 @@ export async function advanceCognitiveCycle(
         return { isBoundary: false, nextSession: updated };
       }
 
-      const { perception } = await getOrComputePerceptionSnapshot(
+      const { perception, targetSpec } = await getOrComputePerceptionSnapshot(
         db,
         session,
         cue,
@@ -473,6 +509,7 @@ export async function advanceCognitiveCycle(
         session,
         cue,
         perception,
+        targetSpec,
         skillKey: options.skillKey,
         memoryRequests: options.memoryRequests,
       });
@@ -549,7 +586,7 @@ export async function advanceCognitiveCycle(
       }
 
       const cue = await getRequiredCue(db, session);
-      const { perception } = await getOrComputePerceptionSnapshot(
+      const { perception, targetSpec } = await getOrComputePerceptionSnapshot(
         db,
         session,
         cue,
@@ -560,6 +597,7 @@ export async function advanceCognitiveCycle(
         session,
         cue,
         perception,
+        targetSpec,
         skillKey: options.skillKey,
         memoryRequests: options.memoryRequests,
       });
@@ -659,7 +697,7 @@ export async function advanceCognitiveCycle(
       }
 
       const cue = await getRequiredCue(db, session);
-      const { perception } = await getOrComputePerceptionSnapshot(
+      const { perception, targetSpec } = await getOrComputePerceptionSnapshot(
         db,
         session,
         cue,
@@ -670,6 +708,7 @@ export async function advanceCognitiveCycle(
         session,
         cue,
         perception,
+        targetSpec,
         skillKey: options.skillKey,
         memoryRequests: options.memoryRequests,
       });
@@ -737,15 +776,15 @@ export async function advanceCognitiveCycle(
       }
 
       const issued = await orchestrateAuthorizationIssuance(db, {
-        commandIdempotencyKey: `auth-issuance:${sessionId}:${authoritativeSafety.generation}`,
+        commandIdempotencyKey: `auth-issuance:${sessionId}:gen${session.evaluationGeneration}:${authoritativeSafety.generation}`,
         sessionId,
         candidateId: candidate.candidateId,
         groundingResultId: grounding.groundingResultId,
         policyDecisionId: persistedPolicy.policyDecisionId,
         expectedSessionRowVersion: session.rowVersion,
         expectedSafetyGeneration: authoritativeSafety.generation,
-        safetyEventId: `ev-safety:${sessionId}:${authoritativeSafety.generation}`,
-        safetyEventKey: `ev-key:safety:${sessionId}:${authoritativeSafety.generation}`,
+        safetyEventId: `ev-safety-auth:${sessionId}:gen${session.evaluationGeneration}:${authoritativeSafety.generation}`,
+        safetyEventKey: `ev-key:safety-auth:${sessionId}:gen${session.evaluationGeneration}:${authoritativeSafety.generation}`,
         issuedAt: now,
       });
 
@@ -784,26 +823,33 @@ export async function advanceCognitiveCycle(
         );
       }
 
-      const auth = runtimeAuthorization;
+      const auth = effectiveAuth;
       if (!auth) {
         // Authorization capability was lost (e.g. process restart).
-        // Transition back to BUILD_CONTEXT to safely acquire fresh evaluation provenance.
-        const resetSession = await transitionSessionPhase(
-          db,
-          session,
-          "BUILD_CONTEXT",
-          now,
-          {
+        // Transition back to BUILD_CONTEXT with incremented evaluationGeneration.
+        const resetSession = await sessionRepository.transitionSession(db, {
+          sessionId: session.sessionId,
+          expectedRowVersion: session.rowVersion,
+          expectedPhase: "PLAN",
+          expectedCandidateId: session.currentCandidateId,
+          nextSessionState: {
+            phase: "BUILD_CONTEXT",
+            failureCount: session.failureCount,
+            retryCount: session.retryCount,
+            maxRetries: session.maxRetries,
+            evaluationGeneration: session.evaluationGeneration + 1,
+            cooldownUntil: session.cooldownUntil,
             currentCandidateId: null,
             currentPlanId: null,
             currentExecutionId: null,
+            updatedAt: now,
           },
-        );
+        });
         return { isBoundary: false, nextSession: resetSession };
       }
 
       const cue = await getRequiredCue(db, session);
-      const { perception } = await getOrComputePerceptionSnapshot(
+      const { perception, targetSpec } = await getOrComputePerceptionSnapshot(
         db,
         session,
         cue,
@@ -814,6 +860,7 @@ export async function advanceCognitiveCycle(
         session,
         cue,
         perception,
+        targetSpec,
         skillKey: options.skillKey,
         memoryRequests: options.memoryRequests,
       });
@@ -884,19 +931,203 @@ export async function advanceCognitiveCycle(
       const firstStep = plan.steps[0];
       const operationId = `op:${executionId}:${firstStep.stepId}`;
 
-      const auth = runtimeAuthorization;
+      const auth = effectiveAuth;
       if (!auth) {
-        const resetSession = await transitionSessionPhase(
+        const op = await executionOperationRepository.findOperationById(
           db,
-          session,
-          "BUILD_CONTEXT",
-          now,
-          {
+          operationId,
+        );
+
+        // Crash resume check 1: If operation already SUCCEEDED, finalize execution idempotently and advance to OBSERVE
+        if (op && op.status === "SUCCEEDED") {
+          const freshStep = await executionStepRepository.findStep(
+            db,
+            executionId,
+            firstStep.stepId,
+          );
+          const freshExec = await executionRepository.findExecutionById(
+            db,
+            executionId,
+          );
+          if (freshStep && freshStep.status !== "SUCCEEDED" && freshExec) {
+            const completedStep = await completeExecutionStep(db, {
+              commandIdempotencyKey: `complete-step:${executionId}:${firstStep.stepId}`,
+              executionEventId: `ev-comp-step:${executionId}:${firstStep.stepId}`,
+              eventKey: `ev-key:comp-step:${executionId}:${firstStep.stepId}`,
+              executionId,
+              planId: plan.planId,
+              stepId: firstStep.stepId,
+              operationGeneration: 1,
+              expectedExecutionRowVersion: freshExec.rowVersion,
+              expectedStepRowVersion: freshStep.rowVersion,
+              completedAt: now,
+              reason: "Successful operation.",
+            });
+            if (completedStep.execution.status !== "SUCCEEDED") {
+              await finalizeExecutionIfComplete(db, {
+                commandIdempotencyKey: `finalize-exec:${executionId}`,
+                executionEventId: `ev-fin-exec:${executionId}`,
+                eventKey: `ev-key:fin-exec:${executionId}`,
+                executionId,
+                expectedExecutionRowVersion: completedStep.execution.rowVersion,
+                completedAt: now,
+                reason: "All steps succeeded.",
+              });
+            }
+          }
+          const updated = await transitionSessionPhase(
+            db,
+            session,
+            "OBSERVE",
+            now,
+          );
+          return { isBoundary: false, nextSession: updated };
+        }
+
+        // Crash resume check 2: If operation already FAILED, finalize failure ledgers idempotently and advance to OBSERVE
+        if (op && op.status === "FAILED") {
+          const freshStep = await executionStepRepository.findStep(
+            db,
+            executionId,
+            firstStep.stepId,
+          );
+          const freshExec = await executionRepository.findExecutionById(
+            db,
+            executionId,
+          );
+          if (freshStep && freshStep.status !== "FAILED" && freshExec) {
+            const failedStep = await failExecutionStep(db, {
+              commandIdempotencyKey: `fail-step:${executionId}:${firstStep.stepId}`,
+              executionEventId: `ev-fail-step:${executionId}:${firstStep.stepId}`,
+              eventKey: `ev-key:fail-step:${executionId}:${firstStep.stepId}`,
+              executionId,
+              planId: plan.planId,
+              stepId: firstStep.stepId,
+              operationGeneration: 1,
+              expectedExecutionRowVersion: freshExec.rowVersion,
+              expectedStepRowVersion: freshStep.rowVersion,
+              completedAt: now,
+              errorSummary: op.uncertaintyReason ?? "Operation failed.",
+            });
+            if (failedStep.execution.status !== "FAILED") {
+              await finalizeExecutionFailure(db, {
+                commandIdempotencyKey: `finalize-fail-exec:${executionId}`,
+                executionEventId: `ev-fin-fail-exec:${executionId}`,
+                eventKey: `ev-key:fin-fail-exec:${executionId}`,
+                executionId,
+                expectedExecutionRowVersion: failedStep.execution.rowVersion,
+                completedAt: now,
+                errorSummary: op.uncertaintyReason ?? "Operation failed.",
+              });
+            }
+          }
+          const updated = await transitionSessionPhase(
+            db,
+            session,
+            "OBSERVE",
+            now,
+          );
+          return { isBoundary: false, nextSession: updated };
+        }
+
+        // Reconciliation check: if operation is IN_FLIGHT or UNKNOWN
+        if (op && op.status === "IN_FLIGHT" && op.attemptCount > 0) {
+          return {
+            isBoundary: true,
+            cycleResult: {
+              status: "RECONCILIATION_REQUIRED",
+              sessionId,
+              executionId,
+              operationId,
+              reason: "Operation is IN_FLIGHT; reconciliation required.",
+            },
+            nextSession: session,
+          };
+        }
+        if (op && op.status === "UNKNOWN") {
+          return {
+            isBoundary: true,
+            cycleResult: {
+              status: "RECONCILIATION_REQUIRED",
+              sessionId,
+              executionId,
+              operationId,
+              reason: "Operation outcome is UNKNOWN; reconciliation required.",
+            },
+            nextSession: session,
+          };
+        }
+
+        // Operation is PENDING (attemptCount === 0) or unstarted: terminalize pending execution records safely before resetting
+        const existingExec = await executionRepository.findExecutionById(
+          db,
+          executionId,
+        );
+        if (existingExec) {
+          const step = await executionStepRepository.findStep(
+            db,
+            executionId,
+            firstStep.stepId,
+          );
+          if (
+            step &&
+            (step.status === "PENDING" || step.status === "RUNNING")
+          ) {
+            await failExecutionStep(db, {
+              commandIdempotencyKey: `abort-step:${executionId}:${firstStep.stepId}`,
+              executionEventId: `ev-abort-step:${executionId}:${firstStep.stepId}`,
+              eventKey: `ev-key:abort-step:${executionId}:${firstStep.stepId}`,
+              executionId,
+              planId: plan.planId,
+              stepId: firstStep.stepId,
+              operationGeneration: 1,
+              expectedExecutionRowVersion: existingExec.rowVersion,
+              expectedStepRowVersion: step.rowVersion,
+              completedAt: now,
+              errorSummary:
+                "Execution aborted due to lost runtime authorization before dispatch.",
+            }).catch(() => {});
+          }
+
+          const freshExec = await executionRepository.findExecutionById(
+            db,
+            executionId,
+          );
+          if (
+            freshExec &&
+            (freshExec.status === "PENDING" || freshExec.status === "RUNNING")
+          ) {
+            await finalizeExecutionFailure(db, {
+              commandIdempotencyKey: `abort-exec:${executionId}`,
+              executionEventId: `ev-abort-exec:${executionId}`,
+              eventKey: `ev-key:abort-exec:${executionId}`,
+              executionId,
+              expectedExecutionRowVersion: freshExec.rowVersion,
+              completedAt: now,
+              errorSummary:
+                "Execution aborted due to lost runtime authorization before dispatch.",
+            }).catch(() => {});
+          }
+        }
+
+        const resetSession = await sessionRepository.transitionSession(db, {
+          sessionId: session.sessionId,
+          expectedRowVersion: session.rowVersion,
+          expectedPhase: "DURABLE_EXECUTION",
+          expectedCandidateId: session.currentCandidateId,
+          nextSessionState: {
+            phase: "BUILD_CONTEXT",
+            failureCount: session.failureCount,
+            retryCount: session.retryCount,
+            maxRetries: session.maxRetries,
+            evaluationGeneration: session.evaluationGeneration + 1,
+            cooldownUntil: session.cooldownUntil,
             currentCandidateId: null,
             currentPlanId: null,
             currentExecutionId: null,
+            updatedAt: now,
           },
-        );
+        });
         return { isBoundary: false, nextSession: resetSession };
       }
 
@@ -912,7 +1143,7 @@ export async function advanceCognitiveCycle(
 
       const candidate = await getRequiredCandidate(db, session);
       const cue = await getRequiredCue(db, session);
-      const { perception } = await getOrComputePerceptionSnapshot(
+      const { perception, targetSpec } = await getOrComputePerceptionSnapshot(
         db,
         session,
         cue,
@@ -923,6 +1154,7 @@ export async function advanceCognitiveCycle(
         session,
         cue,
         perception,
+        targetSpec,
         skillKey: options.skillKey,
         memoryRequests: options.memoryRequests,
       });
@@ -1008,22 +1240,6 @@ export async function advanceCognitiveCycle(
       const firstStep = plan.steps[0];
       const operationId = `op:${executionId}:${firstStep.stepId}`;
 
-      const auth = runtimeAuthorization;
-      if (!auth) {
-        const resetSession = await transitionSessionPhase(
-          db,
-          session,
-          "BUILD_CONTEXT",
-          now,
-          {
-            currentCandidateId: null,
-            currentPlanId: null,
-            currentExecutionId: null,
-          },
-        );
-        return { isBoundary: false, nextSession: resetSession };
-      }
-
       const op = await executionOperationRepository.findOperationById(
         db,
         operationId,
@@ -1032,6 +1248,98 @@ export async function advanceCognitiveCycle(
         throw PersistenceError.notFound(
           `Operation "${operationId}" not found in ACT phase.`,
         );
+      }
+
+      // Crash resume check 1: If operation already SUCCEEDED, finalize ledgers idempotently and advance to OBSERVE
+      if (op.status === "SUCCEEDED") {
+        const freshStep = await executionStepRepository.findStep(
+          db,
+          executionId,
+          firstStep.stepId,
+        );
+        const freshExec = await executionRepository.findExecutionById(
+          db,
+          executionId,
+        );
+        if (freshStep && freshStep.status !== "SUCCEEDED" && freshExec) {
+          const completed = await completeExecutionStep(db, {
+            commandIdempotencyKey: `complete-step:${executionId}:${firstStep.stepId}`,
+            executionEventId: `ev-comp-step:${executionId}:${firstStep.stepId}`,
+            eventKey: `ev-key:comp-step:${executionId}:${firstStep.stepId}`,
+            executionId,
+            planId: plan.planId,
+            stepId: firstStep.stepId,
+            operationGeneration: 1,
+            expectedExecutionRowVersion: freshExec.rowVersion,
+            expectedStepRowVersion: freshStep.rowVersion,
+            completedAt: now,
+            reason: "Successful operation.",
+          });
+          if (completed.execution.status !== "SUCCEEDED") {
+            await finalizeExecutionIfComplete(db, {
+              commandIdempotencyKey: `finalize-exec:${executionId}`,
+              executionEventId: `ev-fin-exec:${executionId}`,
+              eventKey: `ev-key:fin-exec:${executionId}`,
+              executionId,
+              expectedExecutionRowVersion: completed.execution.rowVersion,
+              completedAt: now,
+              reason: "All steps succeeded.",
+            });
+          }
+        }
+        const updated = await transitionSessionPhase(
+          db,
+          session,
+          "OBSERVE",
+          now,
+        );
+        return { isBoundary: false, nextSession: updated };
+      }
+
+      // Crash resume check 2: If operation already FAILED, finalize failure ledgers idempotently and advance to OBSERVE
+      if (op.status === "FAILED") {
+        const freshStep = await executionStepRepository.findStep(
+          db,
+          executionId,
+          firstStep.stepId,
+        );
+        const freshExec = await executionRepository.findExecutionById(
+          db,
+          executionId,
+        );
+        if (freshStep && freshStep.status !== "FAILED" && freshExec) {
+          const failedStep = await failExecutionStep(db, {
+            commandIdempotencyKey: `fail-step:${executionId}:${firstStep.stepId}`,
+            executionEventId: `ev-fail-step:${executionId}:${firstStep.stepId}`,
+            eventKey: `ev-key:fail-step:${executionId}:${firstStep.stepId}`,
+            executionId,
+            planId: plan.planId,
+            stepId: firstStep.stepId,
+            operationGeneration: 1,
+            expectedExecutionRowVersion: freshExec.rowVersion,
+            expectedStepRowVersion: freshStep.rowVersion,
+            completedAt: now,
+            errorSummary: op.uncertaintyReason ?? "Operation failed.",
+          });
+          if (failedStep.execution.status !== "FAILED") {
+            await finalizeExecutionFailure(db, {
+              commandIdempotencyKey: `finalize-fail-exec:${executionId}`,
+              executionEventId: `ev-fin-fail-exec:${executionId}`,
+              eventKey: `ev-key:fin-fail-exec:${executionId}`,
+              executionId,
+              expectedExecutionRowVersion: failedStep.execution.rowVersion,
+              completedAt: now,
+              errorSummary: op.uncertaintyReason ?? "Operation failed.",
+            });
+          }
+        }
+        const updated = await transitionSessionPhase(
+          db,
+          session,
+          "OBSERVE",
+          now,
+        );
+        return { isBoundary: false, nextSession: updated };
       }
 
       if (op.status === "IN_FLIGHT" && op.attemptCount > 0) {
@@ -1061,9 +1369,77 @@ export async function advanceCognitiveCycle(
         };
       }
 
+      // External dispatch has not occurred: require live runtime authorization capability
+      const auth = effectiveAuth;
+      if (!auth) {
+        // Terminalize old execution safely
+        const freshStep = await executionStepRepository.findStep(
+          db,
+          executionId,
+          firstStep.stepId,
+        );
+        const freshExec = await executionRepository.findExecutionById(
+          db,
+          executionId,
+        );
+        if (
+          freshStep &&
+          (freshStep.status === "PENDING" || freshStep.status === "RUNNING") &&
+          freshExec
+        ) {
+          const failedStep = await failExecutionStep(db, {
+            commandIdempotencyKey: `abort-act-step:${executionId}:${firstStep.stepId}`,
+            executionEventId: `ev-abort-act-step:${executionId}:${firstStep.stepId}`,
+            eventKey: `ev-key:abort-act-step:${executionId}:${firstStep.stepId}`,
+            executionId,
+            planId: plan.planId,
+            stepId: firstStep.stepId,
+            operationGeneration: 1,
+            expectedExecutionRowVersion: freshExec.rowVersion,
+            expectedStepRowVersion: freshStep.rowVersion,
+            completedAt: now,
+            errorSummary:
+              "Execution aborted due to lost runtime authorization before dispatch.",
+          }).catch(() => null);
+
+          if (failedStep && failedStep.execution.status !== "FAILED") {
+            await finalizeExecutionFailure(db, {
+              commandIdempotencyKey: `abort-act-exec:${executionId}`,
+              executionEventId: `ev-abort-act-exec:${executionId}`,
+              eventKey: `ev-key:abort-act-exec:${executionId}`,
+              executionId,
+              expectedExecutionRowVersion: failedStep.execution.rowVersion,
+              completedAt: now,
+              errorSummary:
+                "Execution aborted due to lost runtime authorization before dispatch.",
+            }).catch(() => {});
+          }
+        }
+
+        const resetSession = await sessionRepository.transitionSession(db, {
+          sessionId: session.sessionId,
+          expectedRowVersion: session.rowVersion,
+          expectedPhase: "ACT",
+          expectedCandidateId: session.currentCandidateId,
+          nextSessionState: {
+            phase: "BUILD_CONTEXT",
+            failureCount: session.failureCount,
+            retryCount: session.retryCount,
+            maxRetries: session.maxRetries,
+            evaluationGeneration: session.evaluationGeneration + 1,
+            cooldownUntil: session.cooldownUntil,
+            currentCandidateId: null,
+            currentPlanId: null,
+            currentExecutionId: null,
+            updatedAt: now,
+          },
+        });
+        return { isBoundary: false, nextSession: resetSession };
+      }
+
       const candidate = await getRequiredCandidate(db, session);
       const cue = await getRequiredCue(db, session);
-      const { perception } = await getOrComputePerceptionSnapshot(
+      const { perception, targetSpec } = await getOrComputePerceptionSnapshot(
         db,
         session,
         cue,
@@ -1074,6 +1450,7 @@ export async function advanceCognitiveCycle(
         session,
         cue,
         perception,
+        targetSpec,
         skillKey: options.skillKey,
         memoryRequests: options.memoryRequests,
       });
@@ -1122,6 +1499,79 @@ export async function advanceCognitiveCycle(
           },
           nextSession: session,
         };
+      }
+
+      // Reload fresh row versions and finalize step and execution
+      const freshStep = await executionStepRepository.findStep(
+        db,
+        executionId,
+        firstStep.stepId,
+      );
+      const freshExec = await executionRepository.findExecutionById(
+        db,
+        executionId,
+      );
+
+      if (
+        freshStep &&
+        freshExec &&
+        dispatchResult.dispatchResult.outcome === "CONFIRMED_SUCCESS"
+      ) {
+        const completed = await completeExecutionStep(db, {
+          commandIdempotencyKey: `complete-step:${executionId}:${firstStep.stepId}`,
+          executionEventId: `ev-comp-step:${executionId}:${firstStep.stepId}`,
+          eventKey: `ev-key:comp-step:${executionId}:${firstStep.stepId}`,
+          executionId,
+          planId: plan.planId,
+          stepId: firstStep.stepId,
+          operationGeneration: 1,
+          expectedExecutionRowVersion: freshExec.rowVersion,
+          expectedStepRowVersion: freshStep.rowVersion,
+          completedAt: now,
+          reason: "Successful operation.",
+        });
+        if (completed.execution.status !== "SUCCEEDED") {
+          await finalizeExecutionIfComplete(db, {
+            commandIdempotencyKey: `finalize-exec:${executionId}`,
+            executionEventId: `ev-fin-exec:${executionId}`,
+            eventKey: `ev-key:fin-exec:${executionId}`,
+            executionId,
+            expectedExecutionRowVersion: completed.execution.rowVersion,
+            completedAt: now,
+            reason: "All steps succeeded.",
+          });
+        }
+      } else if (freshStep && freshExec) {
+        const errorSummary =
+          "errorSummary" in dispatchResult.dispatchResult &&
+          typeof dispatchResult.dispatchResult.errorSummary === "string"
+            ? dispatchResult.dispatchResult.errorSummary
+            : "Operation failed.";
+
+        const failedStep = await failExecutionStep(db, {
+          commandIdempotencyKey: `fail-step:${executionId}:${firstStep.stepId}`,
+          executionEventId: `ev-fail-step:${executionId}:${firstStep.stepId}`,
+          eventKey: `ev-key:fail-step:${executionId}:${firstStep.stepId}`,
+          executionId,
+          planId: plan.planId,
+          stepId: firstStep.stepId,
+          operationGeneration: 1,
+          expectedExecutionRowVersion: freshExec.rowVersion,
+          expectedStepRowVersion: freshStep.rowVersion,
+          completedAt: now,
+          errorSummary,
+        });
+        if (failedStep.execution.status !== "FAILED") {
+          await finalizeExecutionFailure(db, {
+            commandIdempotencyKey: `finalize-fail-exec:${executionId}`,
+            executionEventId: `ev-fin-fail-exec:${executionId}`,
+            eventKey: `ev-key:fin-fail-exec:${executionId}`,
+            executionId,
+            expectedExecutionRowVersion: failedStep.execution.rowVersion,
+            completedAt: now,
+            errorSummary,
+          });
+        }
       }
 
       // Transition session from ACT to OBSERVE
@@ -1245,6 +1695,15 @@ export async function advanceCognitiveCycle(
       const observationId = `obs:${executionId}:${firstStep.stepId}`;
       const verificationId = `ver:${executionId}`;
 
+      const cue = await getRequiredCue(db, session);
+      const { targetSpec } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
+
       await verifyExecutionResult(db, ports.verifier, {
         commandIdempotencyKey: `verify:${verificationId}`,
         verificationId,
@@ -1253,6 +1712,7 @@ export async function advanceCognitiveCycle(
         expectedVerificationGeneration: 1,
         verifierVersion: ports.verifier.version,
         verifiedAt: now,
+        expectedResult: targetSpec as unknown as JSONObject,
       });
 
       const updated = await transitionSessionPhase(db, session, "REWARD", now);
@@ -1342,16 +1802,16 @@ export async function advanceCognitiveCycle(
       }
 
       const recoveryResult = await persistFailureRecovery(db, {
-        commandIdempotencyKey: `fail-rec:${session.sessionId}:${session.rowVersion}`,
+        commandIdempotencyKey: `fail-rec:${session.sessionId}:gen${session.evaluationGeneration}:${session.rowVersion}`,
         sessionId: session.sessionId,
         expectedSessionRowVersion: session.rowVersion,
         expectedSafetyGeneration: authoritativeSafety.generation,
         failure: "UNVERIFIED_RESULT",
         reason: `Execution result was ${verification.status}: ${verification.reason}`,
         evidenceIds: [`ev-obs:${executionId}:${plan.steps[0].stepId}`],
-        auditEventId: `audit:${session.sessionId}:${session.failureCount + 1}`,
-        safetyEventId: `ev-safety:${session.sessionId}:${authoritativeSafety.generation + 1}`,
-        safetyEventKey: `ev-key:safety:${session.sessionId}:${authoritativeSafety.generation + 1}`,
+        auditEventId: `audit:${session.sessionId}:gen${session.evaluationGeneration}:${session.failureCount + 1}`,
+        safetyEventId: `ev-safety-rec:${session.sessionId}:gen${session.evaluationGeneration}:${authoritativeSafety.generation + 1}`,
+        safetyEventKey: `ev-key:safety-rec:${session.sessionId}:gen${session.evaluationGeneration}:${authoritativeSafety.generation + 1}`,
         candidateId: session.currentCandidateId,
         planId: plan.planId,
         createdAt: now,
@@ -1489,16 +1949,45 @@ export async function advanceCognitiveCycle(
 
       if (executionId && verification) {
         const isVerified = verification.status === "VERIFIED";
+        const exec = await executionRepository.findExecutionById(
+          db,
+          executionId,
+        );
+        const isExecutionSucceeded = exec?.status === "SUCCEEDED";
+
+        // Defensive checks: all execution steps must be SUCCEEDED and durable operation must be SUCCEEDED
+        const steps = await executionStepRepository.listSteps(db, executionId);
+        const allStepsSucceeded =
+          steps.length > 0 && steps.every((s) => s.status === "SUCCEEDED");
+
+        const firstStep = plan?.steps[0] ?? steps[0];
+        const operationId = firstStep
+          ? `op:${executionId}:${firstStep.stepId}`
+          : null;
+        const op = operationId
+          ? await executionOperationRepository.findOperationById(
+              db,
+              operationId,
+            )
+          : null;
+        const isOperationSucceeded = op?.status === "SUCCEEDED";
+
+        const isTerminalComplete =
+          isVerified &&
+          isExecutionSucceeded &&
+          allStepsSucceeded &&
+          isOperationSucceeded;
+
         return {
           isBoundary: true,
           cycleResult: {
-            status: isVerified ? "COMPLETED" : "FAILED",
+            status: isTerminalComplete ? "COMPLETED" : "FAILED",
             sessionId,
             executionId,
             verificationId: verification.verificationId,
             rewardEventId: `rew:${verification.verificationId}`,
-            memoriesAdmitted: isVerified ? memoriesAdmittedCount : 0,
-            reason: `Verification status was ${verification.status}.`,
+            memoriesAdmitted: isTerminalComplete ? memoriesAdmittedCount : 0,
+            reason: `Verification status was ${verification.status}, execution status was ${exec?.status ?? "unknown"}, steps ${allStepsSucceeded ? "SUCCEEDED" : "NOT_ALL_SUCCEEDED"}, operation ${op?.status ?? "unknown"}.`,
           },
           nextSession: updated,
         };

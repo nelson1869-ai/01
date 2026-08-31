@@ -8,10 +8,23 @@ export function getDatabaseContext(): PostgresDatabaseContext {
       process.env.NODE_ENV === "test" ||
       process.env.VITEST === "true" ||
       process.env.VITEST !== undefined;
+    const isProduction = process.env.NODE_ENV === "production";
 
-    const connectionString = isTest
-      ? process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
-      : process.env.DATABASE_URL || process.env.TEST_DATABASE_URL;
+    let connectionString: string | undefined;
+    if (isTest) {
+      connectionString =
+        process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+    } else if (isProduction) {
+      connectionString = process.env.DATABASE_URL;
+      if (!connectionString) {
+        throw new Error(
+          "DATABASE_URL environment variable is strictly required in production mode.",
+        );
+      }
+    } else {
+      connectionString =
+        process.env.DATABASE_URL || process.env.TEST_DATABASE_URL;
+    }
 
     if (!connectionString) {
       throw new Error(

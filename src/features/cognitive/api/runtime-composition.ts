@@ -39,13 +39,93 @@ export class ServerPerception implements PerceptionPort {
     const payload = (
       cue.payload && typeof cue.payload === "object" ? cue.payload : {}
     ) as Record<string, unknown>;
-    const requestedFile =
-      typeof payload.path === "string" ? payload.path : "README.md";
+    const promptText =
+      typeof payload.prompt === "string"
+        ? payload.prompt
+        : typeof payload.request === "string"
+          ? payload.request
+          : typeof payload.message === "string"
+            ? payload.message
+            : cue.source;
+
+    let action =
+      typeof payload.requestedAction === "string"
+        ? payload.requestedAction
+        : typeof payload.action === "string"
+          ? payload.action
+          : undefined;
+
+    let path = typeof payload.path === "string" ? payload.path : undefined;
+    let issueNumber =
+      typeof payload.issueNumber === "number" ? payload.issueNumber : undefined;
+    let pullNumber =
+      typeof payload.pullNumber === "number" ? payload.pullNumber : undefined;
+    const state = typeof payload.state === "string" ? payload.state : undefined;
+    const perPage =
+      typeof payload.perPage === "number" ? payload.perPage : undefined;
+
+    if (!action) {
+      if (
+        path ||
+        /\b(?:file|path|read|inspect|contents?|from|in)\s+([a-zA-Z0-9_./-]+\.[a-zA-Z0-9_-]+)\b/i.test(
+          promptText,
+        ) ||
+        promptText.toLowerCase().includes("readme") ||
+        promptText.toLowerCase().includes("package.json")
+      ) {
+        action = "github.contents.read";
+        if (!path) {
+          const m =
+            promptText.match(
+              /\b(?:file|path|read|inspect|contents?|from|in)\s+([a-zA-Z0-9_./-]+\.[a-zA-Z0-9_-]+)\b/i,
+            ) ??
+            promptText.match(/\b([a-zA-Z0-9_/-]+\.[a-zA-Z0-9_-]+)\b/i);
+          path = m
+            ? m[1]
+            : promptText.toLowerCase().includes("readme")
+              ? "README.md"
+              : "package.json";
+        }
+      } else if (
+        issueNumber !== undefined ||
+        /\b(?:issue\s*(?:#|\s+)?|#)(\d+)\b/i.test(promptText)
+      ) {
+        action = "github.issue.get";
+        if (issueNumber === undefined) {
+          const m = promptText.match(/\b(?:issue\s*(?:#|\s+)?|#)(\d+)\b/i);
+          issueNumber = m ? parseInt(m[1], 10) : undefined;
+        }
+      } else if (
+        pullNumber !== undefined ||
+        /\b(?:pull\s*request|pr)\s*(?:#|\s+)?(\d+)\b/i.test(promptText)
+      ) {
+        action = "github.pull_request.get";
+        if (pullNumber === undefined) {
+          const m = promptText.match(/\b(?:pull\s*request|pr)\s*(?:#|\s+)?(\d+)\b/i);
+          pullNumber = m ? parseInt(m[1], 10) : undefined;
+        }
+      } else if (promptText.toLowerCase().includes("issues")) {
+        action = "github.issues.list";
+      } else if (
+        promptText.toLowerCase().includes("pulls") ||
+        promptText.toLowerCase().includes("pull requests")
+      ) {
+        action = "github.pull_requests.list";
+      } else {
+        action = "github.repo.get";
+      }
+    }
+
     return {
       summary: `Perceived task for ${cue.type}: ${cue.source}`,
       structuredFacts: {
+        action,
         targetRepo: ALLOWED_GITHUB_REPO,
-        requestedFile,
+        ...(path ? { path, requestedFile: path } : {}),
+        ...(issueNumber ? { issueNumber } : {}),
+        ...(pullNumber ? { pullNumber } : {}),
+        ...(state ? { state } : {}),
+        ...(perPage ? { perPage } : {}),
       },
       perceivedAt: cue.receivedAt ?? new Date().toISOString(),
     };

@@ -1,6 +1,7 @@
 import type { PersistedCognitiveSession } from "../../contracts/cognitive-session";
 import type { PersistedCueIngress } from "../../contracts/cue-ingress";
 import type { StoredExecutionSafety } from "../../contracts/execution-safety";
+import { assertDataSecurity } from "../../../security/secret-safety";
 import { cueRepository } from "../repositories/cue-repository";
 import { safetyRepository } from "../repositories/safety-repository";
 import { sessionRepository } from "../repositories/session-repository";
@@ -26,6 +27,8 @@ export async function ingestCue(
   executor: DatabaseExecutor,
   input: IngestCueInput,
 ): Promise<IngestCueResult> {
+  assertDataSecurity(input.cue.payload, "cue.payload");
+
   return await runInTransaction(executor, async (tx) => {
     const cueResult = await cueRepository.insertCue(tx, input.cue);
 

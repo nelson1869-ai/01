@@ -37,6 +37,13 @@ const dummyContext: AssembledCognitiveContext = {
     structuredFacts: { actionType: "read", target: "README.md" },
     perceivedAt: "2026-08-31T05:00:00.000Z",
   },
+  targetSpec: {
+    kind: "FILE",
+    repository: "nelson1869-ai/01",
+    owner: "nelson1869-ai",
+    repo: "01",
+    path: "README.md",
+  },
   verifiedMemories: [],
   learningState: {
     skillKey: "github.contents.read",

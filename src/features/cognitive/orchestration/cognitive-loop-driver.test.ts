@@ -165,7 +165,7 @@ describe("Cognitive Loop Driver unit tests (M6)", () => {
       currentCandidateId: null,
       currentPlanId: null,
       currentExecutionId: null,
-      phase: "CUE",
+      phase: "PLAN",
       failureCount: 3,
       retryCount: 3,
       maxRetries: 3,

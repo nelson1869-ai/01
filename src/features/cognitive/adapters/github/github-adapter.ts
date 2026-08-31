@@ -172,10 +172,16 @@ export class GitHubReadOnlyAdapter implements OperationAdapter<
         return `${this.baseUrl}/repos/${owner}/${repo}`;
 
       case "github.contents.read": {
-        const path = req.path ?? "README.md";
+        const path = req.path;
+        if (!path || typeof path !== "string" || path.trim() === "") {
+          throw new Error(
+            "Missing or invalid path for github.contents.read. An explicit path is required.",
+          );
+        }
         this.validatePathSecurity(path);
+        const encodedPath = path.split("/").map(encodeURIComponent).join("/");
         const refParam = req.ref ? `?ref=${encodeURIComponent(req.ref)}` : "";
-        return `${this.baseUrl}/repos/${owner}/${repo}/contents/${encodeURI(path)}${refParam}`;
+        return `${this.baseUrl}/repos/${owner}/${repo}/contents/${encodedPath}${refParam}`;
       }
 
       case "github.issues.list": {
@@ -185,9 +191,15 @@ export class GitHubReadOnlyAdapter implements OperationAdapter<
       }
 
       case "github.issue.get": {
-        const issueNumber = req.issueNumber ?? 1;
-        if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
-          throw new Error(`Invalid issue number: ${issueNumber}`);
+        const issueNumber = req.issueNumber;
+        if (
+          typeof issueNumber !== "number" ||
+          !Number.isInteger(issueNumber) ||
+          issueNumber <= 0
+        ) {
+          throw new Error(
+            `Missing or invalid issue number: ${issueNumber}. An explicit positive integer issueNumber is required.`,
+          );
         }
         return `${this.baseUrl}/repos/${owner}/${repo}/issues/${issueNumber}`;
       }
@@ -199,9 +211,15 @@ export class GitHubReadOnlyAdapter implements OperationAdapter<
       }
 
       case "github.pull_request.get": {
-        const pullNumber = req.pullNumber ?? 1;
-        if (!Number.isInteger(pullNumber) || pullNumber <= 0) {
-          throw new Error(`Invalid pull request number: ${pullNumber}`);
+        const pullNumber = req.pullNumber;
+        if (
+          typeof pullNumber !== "number" ||
+          !Number.isInteger(pullNumber) ||
+          pullNumber <= 0
+        ) {
+          throw new Error(
+            `Missing or invalid pull request number: ${pullNumber}. An explicit positive integer pullNumber is required.`,
+          );
         }
         return `${this.baseUrl}/repos/${owner}/${repo}/pulls/${pullNumber}`;
       }
@@ -237,37 +255,51 @@ export class GitHubReadOnlyAdapter implements OperationAdapter<
     req: GitHubOperationRequest,
     rawJson: unknown,
   ): GitHubOperationResult {
+    void req;
     const data = (
       rawJson && typeof rawJson === "object" ? rawJson : {}
     ) as Record<string, unknown>;
 
     switch (operationKind) {
-      case "github.repo.get":
+      case "github.repo.get": {
+        if (!rawJson || typeof rawJson !== "object" || Array.isArray(rawJson)) {
+          throw new Error(
+            "GitHub repository response is malformed (expected non-array object).",
+          );
+        }
         return {
-          name: typeof data.name === "string" ? data.name : "01",
-          fullName:
-            typeof data.full_name === "string"
-              ? data.full_name
-              : ALLOWED_GITHUB_REPO,
-          defaultBranch:
-            typeof data.default_branch === "string"
-              ? data.default_branch
-              : "main",
+          ...(typeof data.name === "string" ? { name: data.name } : {}),
+          ...(typeof data.full_name === "string"
+            ? { fullName: data.full_name }
+            : {}),
+          ...(typeof data.default_branch === "string"
+            ? { defaultBranch: data.default_branch }
+            : {}),
           description:
             typeof data.description === "string" ? data.description : null,
-          isPrivate: Boolean(data.private),
-          updatedAt:
-            typeof data.updated_at === "string"
-              ? data.updated_at
-              : new Date().toISOString(),
+          ...(typeof data.private === "boolean"
+            ? { isPrivate: data.private }
+            : {}),
+          ...(typeof data.updated_at === "string"
+            ? { updatedAt: data.updated_at }
+            : {}),
         };
+      }
 
       case "github.contents.read": {
+        if (!rawJson || typeof rawJson !== "object" || Array.isArray(rawJson)) {
+          throw new Error(
+            "GitHub file contents response is malformed (expected non-array object).",
+          );
+        }
         const size = typeof data.size === "number" ? data.size : 0;
+        const observedPath =
+          typeof data.path === "string" ? data.path : undefined;
+
         if (size > 256 * 1024) {
           return {
             repository: ALLOWED_GITHUB_REPO,
-            path: req.path ?? "README.md",
+            ...(observedPath ? { path: observedPath } : {}),
             sha: typeof data.sha === "string" ? data.sha : null,
             size,
             isOversized: true,
@@ -295,7 +327,7 @@ export class GitHubReadOnlyAdapter implements OperationAdapter<
 
         return {
           repository: ALLOWED_GITHUB_REPO,
-          path: req.path ?? "README.md",
+          ...(observedPath ? { path: observedPath } : {}),
           sha: typeof data.sha === "string" ? data.sha : null,
           size,
           content: boundedContent,
@@ -304,18 +336,31 @@ export class GitHubReadOnlyAdapter implements OperationAdapter<
       }
 
       case "github.issues.list": {
-        const items = Array.isArray(rawJson) ? rawJson : [];
-        const boundedItems = items.slice(0, 50).map((rawItem: unknown) => {
+        if (!Array.isArray(rawJson)) {
+          throw new Error(
+            "GitHub issues list response is malformed (expected array).",
+          );
+        }
+        const issuesOnly = rawJson.filter((rawItem: unknown) => {
+          const item = (
+            rawItem && typeof rawItem === "object" ? rawItem : {}
+          ) as Record<string, unknown>;
+          return !("pull_request" in item);
+        });
+        const boundedItems = issuesOnly.slice(0, 50).map((rawItem: unknown) => {
           const item = (
             rawItem && typeof rawItem === "object" ? rawItem : {}
           ) as Record<string, unknown>;
           return {
-            number: typeof item.number === "number" ? item.number : undefined,
+            ...(typeof item.number === "number" ? { number: item.number } : {}),
             title: String(item.title ?? "").slice(0, 200),
-            state: typeof item.state === "string" ? item.state : undefined,
-            url: typeof item.html_url === "string" ? item.html_url : undefined,
-            updatedAt:
-              typeof item.updated_at === "string" ? item.updated_at : undefined,
+            ...(typeof item.state === "string" ? { state: item.state } : {}),
+            ...(typeof item.html_url === "string"
+              ? { url: item.html_url }
+              : {}),
+            ...(typeof item.updated_at === "string"
+              ? { updatedAt: item.updated_at }
+              : {}),
           };
         });
         return {
@@ -325,31 +370,47 @@ export class GitHubReadOnlyAdapter implements OperationAdapter<
         };
       }
 
-      case "github.issue.get":
+      case "github.issue.get": {
+        if (!rawJson || typeof rawJson !== "object" || Array.isArray(rawJson)) {
+          throw new Error(
+            "GitHub issue response is malformed (expected non-array object).",
+          );
+        }
         return {
           repository: ALLOWED_GITHUB_REPO,
-          number: typeof data.number === "number" ? data.number : undefined,
+          ...(typeof data.number === "number" ? { number: data.number } : {}),
           title: String(data.title ?? "").slice(0, 200),
-          state: typeof data.state === "string" ? data.state : undefined,
+          ...(typeof data.state === "string" ? { state: data.state } : {}),
           body: String(data.body ?? "").slice(0, 4096),
-          url: typeof data.html_url === "string" ? data.html_url : undefined,
-          updatedAt:
-            typeof data.updated_at === "string" ? data.updated_at : undefined,
+          ...(typeof data.html_url === "string"
+            ? { url: data.html_url }
+            : {}),
+          ...(typeof data.updated_at === "string"
+            ? { updatedAt: data.updated_at }
+            : {}),
         };
+      }
 
       case "github.pull_requests.list": {
-        const items = Array.isArray(rawJson) ? rawJson : [];
-        const boundedItems = items.slice(0, 50).map((rawItem: unknown) => {
+        if (!Array.isArray(rawJson)) {
+          throw new Error(
+            "GitHub pull requests list response is malformed (expected array).",
+          );
+        }
+        const boundedItems = rawJson.slice(0, 50).map((rawItem: unknown) => {
           const item = (
             rawItem && typeof rawItem === "object" ? rawItem : {}
           ) as Record<string, unknown>;
           return {
-            number: typeof item.number === "number" ? item.number : undefined,
+            ...(typeof item.number === "number" ? { number: item.number } : {}),
             title: String(item.title ?? "").slice(0, 200),
-            state: typeof item.state === "string" ? item.state : undefined,
-            url: typeof item.html_url === "string" ? item.html_url : undefined,
-            updatedAt:
-              typeof item.updated_at === "string" ? item.updated_at : undefined,
+            ...(typeof item.state === "string" ? { state: item.state } : {}),
+            ...(typeof item.html_url === "string"
+              ? { url: item.html_url }
+              : {}),
+            ...(typeof item.updated_at === "string"
+              ? { updatedAt: item.updated_at }
+              : {}),
           };
         });
         return {
@@ -359,17 +420,26 @@ export class GitHubReadOnlyAdapter implements OperationAdapter<
         };
       }
 
-      case "github.pull_request.get":
+      case "github.pull_request.get": {
+        if (!rawJson || typeof rawJson !== "object" || Array.isArray(rawJson)) {
+          throw new Error(
+            "GitHub pull request response is malformed (expected non-array object).",
+          );
+        }
         return {
           repository: ALLOWED_GITHUB_REPO,
-          number: typeof data.number === "number" ? data.number : undefined,
+          ...(typeof data.number === "number" ? { number: data.number } : {}),
           title: String(data.title ?? "").slice(0, 200),
-          state: typeof data.state === "string" ? data.state : undefined,
+          ...(typeof data.state === "string" ? { state: data.state } : {}),
           body: String(data.body ?? "").slice(0, 4096),
-          url: typeof data.html_url === "string" ? data.html_url : undefined,
-          updatedAt:
-            typeof data.updated_at === "string" ? data.updated_at : undefined,
+          ...(typeof data.html_url === "string"
+            ? { url: data.html_url }
+            : {}),
+          ...(typeof data.updated_at === "string"
+            ? { updatedAt: data.updated_at }
+            : {}),
         };
+      }
 
       default:
         return {

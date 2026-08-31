@@ -38,75 +38,111 @@ export class DefaultOperationRequestBuilder implements OperationRequestBuilderPo
   ): BuiltOperationRequest {
     void plan;
     void step;
-    void context;
 
     const operationKind = candidate.action;
     const providerScope = "github-rest";
 
     let request: GitHubOperationRequest;
 
-    switch (operationKind) {
-      case "github.repo.get":
-        request = {
-          repository: ALLOWED_GITHUB_REPO,
-        };
-        break;
+    if (context?.targetSpec) {
+      const target = context.targetSpec;
+      switch (operationKind) {
+        case "github.repo.get":
+          request = {
+            repository: target.repository || ALLOWED_GITHUB_REPO,
+          };
+          break;
 
-      case "github.contents.read": {
-        // Extract requested path from candidate goal or perception if present, default to README.md
-        let targetPath = "README.md";
-        const goalLower = candidate.goal.toLowerCase();
-        if (goalLower.includes("package.json")) {
-          targetPath = "package.json";
-        } else if (goalLower.includes("license")) {
-          targetPath = "LICENSE";
-        } else if (goalLower.includes("tsconfig.json")) {
-          targetPath = "tsconfig.json";
-        }
-        request = {
-          repository: ALLOWED_GITHUB_REPO,
-          path: targetPath,
-          ref: "main",
-        };
-        break;
+        case "github.contents.read":
+          if (target.kind !== "FILE") {
+            throw new Error(
+              `Target mismatch: operation "${operationKind}" requires FILE target spec, found "${target.kind}".`,
+            );
+          }
+          request = {
+            repository: target.repository || ALLOWED_GITHUB_REPO,
+            path: target.path,
+            ref: target.ref ?? "main",
+          };
+          break;
+
+        case "github.issues.list":
+          request = {
+            repository: target.repository || ALLOWED_GITHUB_REPO,
+            state:
+              (target.kind === "ISSUE_LIST" ? target.state : "open") ?? "open",
+            perPage: (target.kind === "ISSUE_LIST" ? target.perPage : 10) ?? 10,
+          };
+          break;
+
+        case "github.issue.get":
+          if (target.kind !== "ISSUE") {
+            throw new Error(
+              `Target mismatch: operation "${operationKind}" requires ISSUE target spec, found "${target.kind}".`,
+            );
+          }
+          request = {
+            repository: target.repository || ALLOWED_GITHUB_REPO,
+            issueNumber: target.issueNumber,
+          };
+          break;
+
+        case "github.pull_requests.list":
+          request = {
+            repository: target.repository || ALLOWED_GITHUB_REPO,
+            state:
+              (target.kind === "PULL_REQUEST_LIST" ? target.state : "open") ??
+              "open",
+            perPage:
+              (target.kind === "PULL_REQUEST_LIST" ? target.perPage : 10) ?? 10,
+          };
+          break;
+
+        case "github.pull_request.get":
+          if (target.kind !== "PULL_REQUEST") {
+            throw new Error(
+              `Target mismatch: operation "${operationKind}" requires PULL_REQUEST target spec, found "${target.kind}".`,
+            );
+          }
+          request = {
+            repository: target.repository || ALLOWED_GITHUB_REPO,
+            pullNumber: target.pullNumber,
+          };
+          break;
+
+        default:
+          request = {
+            repository: target.repository || ALLOWED_GITHUB_REPO,
+          };
+          break;
       }
+    } else {
+      switch (operationKind) {
+        case "github.repo.get":
+          request = { repository: ALLOWED_GITHUB_REPO };
+          break;
 
-      case "github.issues.list":
-        request = {
-          repository: ALLOWED_GITHUB_REPO,
-          state: "open",
-          perPage: 10,
-        };
-        break;
+        case "github.issues.list":
+          request = {
+            repository: ALLOWED_GITHUB_REPO,
+            state: "open",
+            perPage: 10,
+          };
+          break;
 
-      case "github.issue.get":
-        request = {
-          repository: ALLOWED_GITHUB_REPO,
-          issueNumber: 1,
-        };
-        break;
+        case "github.pull_requests.list":
+          request = {
+            repository: ALLOWED_GITHUB_REPO,
+            state: "open",
+            perPage: 10,
+          };
+          break;
 
-      case "github.pull_requests.list":
-        request = {
-          repository: ALLOWED_GITHUB_REPO,
-          state: "open",
-          perPage: 10,
-        };
-        break;
-
-      case "github.pull_request.get":
-        request = {
-          repository: ALLOWED_GITHUB_REPO,
-          pullNumber: 1,
-        };
-        break;
-
-      default:
-        // Generic fallback for custom/test skills
-        request = {
-          repository: ALLOWED_GITHUB_REPO,
-        };
-        break;
+        default:
+          throw new Error(
+            `Cannot build operation request for "${operationKind}" without authoritative context targetSpec.`,
+          );
+      }
     }
 
     const requestFingerprint = createCanonicalFingerprint({

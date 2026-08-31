@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  ALLOWED_GITHUB_REPO,
-  GitHubReadOnlyAdapter,
-} from "./github-adapter";
+import { ALLOWED_GITHUB_REPO, GitHubReadOnlyAdapter } from "./github-adapter";
 
 function createMockFetch(responseInit: {
   status?: number;
@@ -68,7 +65,9 @@ describe("GitHubReadOnlyAdapter", () => {
 
     expect(result.outcome).toBe("CONFIRMED_FAILURE");
     if (result.outcome === "CONFIRMED_FAILURE") {
-      expect(result.errorSummary).toContain("not in the allowed target repository allowlist");
+      expect(result.errorSummary).toContain(
+        "not in the allowed target repository allowlist",
+      );
     }
   });
 
@@ -76,7 +75,10 @@ describe("GitHubReadOnlyAdapter", () => {
     let capturedUrl = "";
     let capturedHeaders: Record<string, string> = {};
 
-    const mockFetch = async (url: string | URL | Request, init?: RequestInit) => {
+    const mockFetch = async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       capturedUrl = String(url);
       capturedHeaders = (init?.headers as Record<string, string>) ?? {};
       return new Response(
@@ -103,7 +105,9 @@ describe("GitHubReadOnlyAdapter", () => {
     expect(result.outcome).toBe("CONFIRMED_SUCCESS");
     expect(capturedUrl).toBe("https://api.github.com/repos/nelson1869-ai/01");
     expect(capturedUrl).not.toContain("ghp_mocktoken1234567890abcdef");
-    expect(capturedHeaders.Authorization).toBe("Bearer ghp_mocktoken1234567890abcdef");
+    expect(capturedHeaders.Authorization).toBe(
+      "Bearer ghp_mocktoken1234567890abcdef",
+    );
     expect(capturedHeaders["X-GitHub-Api-Version"]).toBe("2026-03-10");
   });
 
@@ -239,6 +243,128 @@ describe("GitHubReadOnlyAdapter", () => {
       if (result.outcome === "CONFIRMED_FAILURE") {
         expect(result.errorSummary.toLowerCase()).toContain(expectedSubstring);
       }
+    }
+  });
+
+  it("rejects malformed HTTP 200 non-array object on github.issues.list", async () => {
+    const adapter = new GitHubReadOnlyAdapter({
+      token: "test-token",
+      fetchFn: createMockFetch({ status: 200, body: {} }),
+    });
+
+    const result = await adapter.dispatch({
+      ...dummyInput,
+      operationKind: "github.issues.list",
+      request: { repository: ALLOWED_GITHUB_REPO },
+    });
+
+    expect(result.outcome).toBe("CONFIRMED_FAILURE");
+    if (result.outcome === "CONFIRMED_FAILURE") {
+      expect(result.errorSummary).toContain("malformed (expected array)");
+    }
+  });
+
+  it("handles valid HTTP 200 empty array on github.issues.list", async () => {
+    const adapter = new GitHubReadOnlyAdapter({
+      token: "test-token",
+      fetchFn: createMockFetch({ status: 200, body: [] }),
+    });
+
+    const result = await adapter.dispatch({
+      ...dummyInput,
+      operationKind: "github.issues.list",
+      request: { repository: ALLOWED_GITHUB_REPO },
+    });
+
+    expect(result.outcome).toBe("CONFIRMED_SUCCESS");
+    if (result.outcome === "CONFIRMED_SUCCESS") {
+      expect(result.result.count).toBe(0);
+      expect(result.result.issues).toEqual([]);
+      expect(result.result.repository).toBe(ALLOWED_GITHUB_REPO);
+    }
+  });
+
+  it("rejects malformed HTTP 200 non-array object on github.pull_requests.list", async () => {
+    const adapter = new GitHubReadOnlyAdapter({
+      token: "test-token",
+      fetchFn: createMockFetch({ status: 200, body: {} }),
+    });
+
+    const result = await adapter.dispatch({
+      ...dummyInput,
+      operationKind: "github.pull_requests.list",
+      request: { repository: ALLOWED_GITHUB_REPO },
+    });
+
+    expect(result.outcome).toBe("CONFIRMED_FAILURE");
+    if (result.outcome === "CONFIRMED_FAILURE") {
+      expect(result.errorSummary).toContain("malformed (expected array)");
+    }
+  });
+
+  it("handles valid HTTP 200 empty array on github.pull_requests.list", async () => {
+    const adapter = new GitHubReadOnlyAdapter({
+      token: "test-token",
+      fetchFn: createMockFetch({ status: 200, body: [] }),
+    });
+
+    const result = await adapter.dispatch({
+      ...dummyInput,
+      operationKind: "github.pull_requests.list",
+      request: { repository: ALLOWED_GITHUB_REPO },
+    });
+
+    expect(result.outcome).toBe("CONFIRMED_SUCCESS");
+    if (result.outcome === "CONFIRMED_SUCCESS") {
+      expect(result.result.count).toBe(0);
+      expect(result.result.pullRequests).toEqual([]);
+      expect(result.result.repository).toBe(ALLOWED_GITHUB_REPO);
+    }
+  });
+
+  it("filters PR-backed issue records BEFORE slicing to 50 items", async () => {
+    // 50 PR records followed by 10 pure issue records
+    const prRecords = Array.from({ length: 50 }, (_, i) => ({
+      number: 100 + i,
+      title: `PR #${i + 1}`,
+      state: "open",
+      pull_request: {
+        url: `https://api.github.com/repos/nelson1869-ai/01/pulls/${100 + i}`,
+      },
+    }));
+
+    const pureIssues = Array.from({ length: 10 }, (_, i) => ({
+      number: i + 1,
+      title: `Issue #${i + 1}`,
+      state: "open",
+      html_url: `https://github.com/nelson1869-ai/01/issues/${i + 1}`,
+    }));
+
+    const rawResponse = [...prRecords, ...pureIssues];
+
+    const adapter = new GitHubReadOnlyAdapter({
+      token: "test-token",
+      fetchFn: createMockFetch({ status: 200, body: rawResponse }),
+    });
+
+    const result = await adapter.dispatch({
+      ...dummyInput,
+      operationKind: "github.issues.list",
+      request: { repository: ALLOWED_GITHUB_REPO },
+    });
+
+    expect(result.outcome).toBe("CONFIRMED_SUCCESS");
+    if (result.outcome === "CONFIRMED_SUCCESS") {
+      // If filtered before slice, all 10 pure issues are preserved.
+      // If sliced before filter, 0 issues would be returned.
+      expect(result.result.count).toBe(10);
+      const issues = result.result.issues as readonly {
+        number: number;
+        title: string;
+      }[];
+      expect(issues.length).toBe(10);
+      expect(issues[0].number).toBe(1);
+      expect(issues[9].number).toBe(10);
     }
   });
 });

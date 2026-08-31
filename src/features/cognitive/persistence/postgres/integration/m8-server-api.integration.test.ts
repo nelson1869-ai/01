@@ -13,9 +13,7 @@ import type {
   AssembledCognitiveContext,
   PerceptionResult,
 } from "../../../orchestration/context-assembler";
-import {
-  type CognitiveCyclePorts,
-} from "../../../orchestration/cognitive-loop-driver";
+import { type CognitiveCyclePorts } from "../../../orchestration/cognitive-loop-driver";
 import { GeminiCandidateGeneratorPort } from "../../../orchestration/gemini-candidate-generator";
 import {
   GitHubGroundingEvaluator,
@@ -42,11 +40,23 @@ const T0 = "2026-08-31T05:00:00.000Z";
 
 class MockPerception implements PerceptionPort {
   async perceive(cue: PersistedCueIngress): Promise<PerceptionResult> {
+    const payload = (
+      cue.payload && typeof cue.payload === "object" ? cue.payload : {}
+    ) as Record<string, unknown>;
+    const path = typeof payload.path === "string" ? payload.path : "README.md";
+    const action =
+      typeof payload.requestedAction === "string"
+        ? payload.requestedAction
+        : typeof payload.action === "string"
+          ? payload.action
+          : "github.contents.read";
     return {
       summary: `Perceived task: ${cue.type}`,
       structuredFacts: {
+        action,
         targetRepo: ALLOWED_GITHUB_REPO,
-        requestedFile: "README.md",
+        path,
+        requestedFile: path,
       },
       perceivedAt: T0,
     };
@@ -268,7 +278,12 @@ describe("Milestone 8 — Server API & Control Plane Integration Tests (Live Pos
         token: "ghp_testToken123456789012345",
         fetchFn: createMockFetch({
           status: 200,
-          body: { size: 50, encoding: "base64", content: "dGVzdA==" },
+          body: {
+            path: "README.md",
+            size: 50,
+            encoding: "base64",
+            content: "dGVzdA==",
+          },
         }) as typeof fetch,
       }),
       verifier: new GitHubResultVerifier(),

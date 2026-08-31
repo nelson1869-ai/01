@@ -210,15 +210,18 @@ export async function persistAuthorizationIssuance(
 
     if (
       candidate.sessionId !== currentSession.sessionId ||
-      candidate.cueId !== currentSession.cueId
+      candidate.cueId !== currentSession.cueId ||
+      candidate.evaluationGeneration !== currentSession.evaluationGeneration
     ) {
       throw PersistenceError.stateConflict(
-        `Candidate action "${command.candidateId}" does not match session "${currentSession.sessionId}" or cue "${currentSession.cueId}".`,
+        `Candidate action "${command.candidateId}" does not match session "${currentSession.sessionId}", cue "${currentSession.cueId}", or generation (${currentSession.evaluationGeneration}).`,
         {
           candidateSessionId: candidate.sessionId,
           sessionSessionId: currentSession.sessionId,
           candidateCueId: candidate.cueId,
           sessionCueId: currentSession.cueId,
+          candidateGeneration: candidate.evaluationGeneration,
+          sessionGeneration: currentSession.evaluationGeneration,
         },
       );
     }
