@@ -94,7 +94,17 @@ async function persistOperationOutcome(
       tx,
       "record-operation-outcome",
       command.commandIdempotencyKey,
-      command,
+      {
+        commandIdempotencyKey: command.commandIdempotencyKey,
+        operationId: command.operationId,
+        attemptId: command.attemptId,
+        expectedOperationRowVersion: command.expectedOperationRowVersion,
+        outcome: command.outcome,
+        finishedAt: command.finishedAt,
+        providerOperationId: command.providerOperationId ?? null,
+        resultMetadata: command.resultMetadata ?? null,
+        summary: summary ?? null,
+      },
       command.finishedAt,
     );
 
@@ -121,6 +131,8 @@ async function persistOperationOutcome(
       expectedRowVersion: command.expectedOperationRowVersion,
       outcome,
       summary,
+      providerOperationId: command.providerOperationId,
+      resultMetadata: command.resultMetadata,
       finishedAt: command.finishedAt,
     });
     await completeCommand(

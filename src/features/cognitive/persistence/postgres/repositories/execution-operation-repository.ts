@@ -243,6 +243,8 @@ export class ExecutionOperationRepository {
       readonly expectedRowVersion: number;
       readonly outcome: OperationOutcome;
       readonly summary: string | null;
+      readonly providerOperationId?: string | null;
+      readonly resultMetadata?: Record<string, unknown> | null;
       readonly finishedAt: string;
     },
   ): Promise<{
@@ -255,10 +257,30 @@ export class ExecutionOperationRepository {
       );
     }
 
+    const existing = await this.findOperationById(executor, params.operationId);
+    if (!existing) {
+      throw PersistenceError.notFound(
+        `Operation "${params.operationId}" was not found.`,
+      );
+    }
+
+    if (
+      params.providerOperationId &&
+      existing.providerOperationId &&
+      existing.providerOperationId !== params.providerOperationId
+    ) {
+      throw PersistenceError.stateConflict(
+        `Conflicting providerOperationId: existing "${existing.providerOperationId}" vs received "${params.providerOperationId}".`,
+      );
+    }
+
     const operationRows = await executor
       .update(executionOperations)
       .set({
         status: params.outcome,
+        providerOperationId:
+          params.providerOperationId ?? existing.providerOperationId,
+        resultMetadata: params.resultMetadata ?? undefined,
         uncertaintyReason:
           params.outcome === "UNKNOWN" ? params.summary : null,
         reconciliationStatus:
@@ -291,6 +313,7 @@ export class ExecutionOperationRepository {
           params.outcome === "FAILED" || params.outcome === "UNKNOWN"
             ? params.summary
             : null,
+        providerMetadata: params.resultMetadata ?? null,
       })
       .where(
         and(
@@ -312,6 +335,143 @@ export class ExecutionOperationRepository {
       operation: decodeExecutionOperationRow(operationRows[0]),
       attempt: decodeExecutionOperationAttemptRow(attemptRows[0]),
     };
+  }
+
+  async reconcileOperation(
+    executor: DatabaseExecutor,
+    params: {
+      readonly operationId: string;
+      readonly expectedRowVersion: number;
+      readonly reconciliationOutcome: string;
+      readonly evidenceSummary: string;
+      readonly providerOperationId?: string | null;
+      readonly reconciledAt: string;
+    },
+  ): Promise<PersistedExecutionOperation> {
+    const existing = await this.findOperationById(executor, params.operationId);
+    if (!existing) {
+      throw PersistenceError.notFound(
+        `Operation "${params.operationId}" was not found.`,
+      );
+    }
+
+    if (
+      params.providerOperationId &&
+      existing.providerOperationId &&
+      existing.providerOperationId !== params.providerOperationId
+    ) {
+      throw PersistenceError.stateConflict(
+        `Conflicting providerOperationId during reconciliation: existing "${existing.providerOperationId}" vs received "${params.providerOperationId}".`,
+      );
+    }
+
+    if (existing.reconciliationStatus === "RECONCILED") {
+      if (existing.reconciliationOutcome === params.reconciliationOutcome) {
+        return existing;
+      }
+      throw PersistenceError.idempotencyConflict(
+        `Conflicting reconciliation outcome: existing "${existing.reconciliationOutcome}" vs requested "${params.reconciliationOutcome}".`,
+      );
+    }
+
+    if (existing.status !== "UNKNOWN" && existing.status !== "IN_FLIGHT") {
+      throw PersistenceError.stateConflict(
+        `Operation in status "${existing.status}" cannot be reconciled.`,
+      );
+    }
+
+    const rows = await executor
+      .update(executionOperations)
+      .set({
+        reconciliationStatus: "RECONCILED",
+        reconciliationOutcome: params.reconciliationOutcome,
+        providerOperationId:
+          params.providerOperationId ?? existing.providerOperationId,
+        rowVersion: params.expectedRowVersion + 1,
+        updatedAt: params.reconciledAt,
+      })
+      .where(
+        and(
+          eq(executionOperations.operationId, params.operationId),
+          eq(executionOperations.rowVersion, params.expectedRowVersion),
+        ),
+      )
+      .returning();
+
+    if (rows.length === 0) {
+      throw PersistenceError.staleWrite(
+        `Operation "${params.operationId}" could not apply reconciliation at row_version ${params.expectedRowVersion}.`,
+      );
+    }
+
+    return decodeExecutionOperationRow(rows[0]);
+  }
+
+  async markInFlightUnknown(
+    executor: DatabaseExecutor,
+    params: {
+      readonly operationId: string;
+      readonly expectedRowVersion: number;
+      readonly uncertaintyReason: string;
+      readonly occurredAt: string;
+    },
+  ): Promise<PersistedExecutionOperation> {
+    const existing = await this.findOperationById(executor, params.operationId);
+    if (!existing) {
+      throw PersistenceError.notFound(
+        `Operation "${params.operationId}" was not found.`,
+      );
+    }
+
+    if (existing.status === "UNKNOWN") {
+      return existing;
+    }
+
+    if (existing.status !== "IN_FLIGHT") {
+      throw PersistenceError.stateConflict(
+        `Operation in status "${existing.status}" cannot be marked UNKNOWN.`,
+      );
+    }
+
+    const rows = await executor
+      .update(executionOperations)
+      .set({
+        status: "UNKNOWN",
+        uncertaintyReason: params.uncertaintyReason,
+        reconciliationStatus: "REQUIRED",
+        rowVersion: params.expectedRowVersion + 1,
+        updatedAt: params.occurredAt,
+      })
+      .where(
+        and(
+          eq(executionOperations.operationId, params.operationId),
+          eq(executionOperations.status, "IN_FLIGHT"),
+          eq(executionOperations.rowVersion, params.expectedRowVersion),
+        ),
+      )
+      .returning();
+
+    if (rows.length === 0) {
+      throw PersistenceError.staleWrite(
+        `Operation "${params.operationId}" could not transition IN_FLIGHT -> UNKNOWN at row_version ${params.expectedRowVersion}.`,
+      );
+    }
+
+    await executor
+      .update(executionOperationAttempts)
+      .set({
+        status: "UNKNOWN",
+        finishedAt: params.occurredAt,
+        errorSummary: params.uncertaintyReason,
+      })
+      .where(
+        and(
+          eq(executionOperationAttempts.operationId, params.operationId),
+          eq(executionOperationAttempts.status, "IN_FLIGHT"),
+        ),
+      );
+
+    return decodeExecutionOperationRow(rows[0]);
   }
 }
 

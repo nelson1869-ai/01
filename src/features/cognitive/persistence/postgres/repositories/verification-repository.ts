@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 import type { PersistedResultVerification } from "../../contracts/result-verification";
 import { PersistenceError } from "../errors/persistence-errors";
@@ -96,6 +96,33 @@ export class VerificationRepository {
     }
 
     return decodeResultVerificationRow(rows[0]);
+  }
+
+  async findVerificationsByExecutionId(
+    executor: DatabaseExecutor,
+    executionId: string,
+  ): Promise<PersistedResultVerification[]> {
+    const rows = await executor
+      .select()
+      .from(resultVerifications)
+      .where(eq(resultVerifications.executionId, executionId))
+      .orderBy(asc(resultVerifications.verificationGeneration));
+
+    return rows.map((r) => decodeResultVerificationRow(r));
+  }
+
+  async findLatestVerificationByExecutionId(
+    executor: DatabaseExecutor,
+    executionId: string,
+  ): Promise<PersistedResultVerification | null> {
+    const rows = await executor
+      .select()
+      .from(resultVerifications)
+      .where(eq(resultVerifications.executionId, executionId))
+      .orderBy(desc(resultVerifications.verificationGeneration))
+      .limit(1);
+
+    return rows.length === 0 ? null : decodeResultVerificationRow(rows[0]);
   }
 
   async findObservationIdsForVerification(

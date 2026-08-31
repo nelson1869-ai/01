@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   idempotencyKeySchema,
   identifierSchema,
+  jsonObjectSchema,
   nonNegativeSafeIntegerSchema,
   summarySchema,
   timestampSchema,
@@ -33,6 +34,8 @@ const operationOutcomeFields = {
   operationId: identifierSchema,
   attemptId: identifierSchema,
   expectedOperationRowVersion: nonNegativeSafeIntegerSchema,
+  providerOperationId: identifierSchema.nullable().optional(),
+  resultMetadata: jsonObjectSchema.nullable().optional(),
   finishedAt: timestampSchema,
 } as const;
 

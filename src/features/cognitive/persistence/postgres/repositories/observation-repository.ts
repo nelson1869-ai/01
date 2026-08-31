@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import type { PersistedObservation } from "../../contracts/persisted-observation";
 import { PersistenceError } from "../errors/persistence-errors";
@@ -70,6 +70,22 @@ export class ObservationRepository {
       .select()
       .from(observations)
       .where(eq(observations.executionId, executionId));
+
+    return rows.map((r) => decodeObservationRow(r));
+  }
+
+  async findObservationsByIds(
+    executor: DatabaseExecutor,
+    observationIds: readonly string[],
+  ): Promise<PersistedObservation[]> {
+    if (observationIds.length === 0) {
+      return [];
+    }
+
+    const rows = await executor
+      .select()
+      .from(observations)
+      .where(inArray(observations.observationId, observationIds as string[]));
 
     return rows.map((r) => decodeObservationRow(r));
   }
