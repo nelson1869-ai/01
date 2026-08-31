@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 
 import type { PersistedRewardEvent } from "../../contracts/reward-event";
 import { PersistenceError } from "../errors/persistence-errors";
@@ -75,6 +75,19 @@ export class RewardRepository {
     }
 
     return decodeRewardEventRow(rows[0]);
+  }
+
+  async findRewardsByExecutionId(
+    executor: DatabaseExecutor,
+    executionId: string,
+  ): Promise<PersistedRewardEvent[]> {
+    const rows = await executor
+      .select()
+      .from(rewardEvents)
+      .where(eq(rewardEvents.executionId, executionId))
+      .orderBy(asc(rewardEvents.createdAt));
+
+    return rows.map((r) => decodeRewardEventRow(r));
   }
 
   async appendReward(

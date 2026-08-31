@@ -1,0 +1,691 @@
+{
+  "info": {
+    "_postman_id": "9a3e218c-8f1d-44a5-9273-autodo-m8-complete",
+    "name": "AutoDo AI",
+    "description": "AutoDo AI Control Plane and Server APIs (Milestones 8.1 - 8.7)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "M8.1 Cue & Sessions",
+      "item": [
+        {
+          "name": "Create Cue",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201 or 200\", function () {",
+                  "    pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "pm.test(\"Save cueId and sessionId into environment\", function () {",
+                  "    var json = pm.response.json();",
+                  "    if (json && json.data) {",
+                  "        if (json.data.cue && json.data.cue.cueId) {",
+                  "            pm.environment.set(\"cueId\", json.data.cue.cueId);",
+                  "        }",
+                  "        if (json.data.session && json.data.session.sessionId) {",
+                  "            pm.environment.set(\"sessionId\", json.data.session.sessionId);",
+                  "        }",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "postman-sample-key-1",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"postman\",\n  \"type\": \"user.action\",\n  \"payload\": {\n    \"instruction\": \"Read README.md from repository\"\n  },\n  \"maxRetries\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/cues",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "cues"
+              ]
+            },
+            "description": "Atomically creates a durable cue and its initial cognitive session (in CUE phase)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Cue",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Cue ID matches requested cueId\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data.cue.cueId).to.eql(pm.environment.get(\"cueId\"));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/cues/{{cueId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "cues",
+                "{{cueId}}"
+              ]
+            },
+            "description": "Retrieves the durable cue record by cueId."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Session ID matches requested sessionId\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data.session.sessionId).to.eql(pm.environment.get(\"sessionId\"));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/sessions/{{sessionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "sessions",
+                "{{sessionId}}"
+              ]
+            },
+            "description": "Retrieves the durable cognitive session state by sessionId."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "M8.2 Run Cognitive Cycle",
+      "item": [
+        {
+          "name": "Run Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Result status and session exist\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data).to.have.property(\"result\");",
+                  "    pm.expect(json.data.result).to.have.property(\"status\");",
+                  "    pm.expect(json.data).to.have.property(\"session\");",
+                  "    pm.expect(json.data.session.sessionId).to.eql(pm.environment.get(\"sessionId\"));",
+                  "",
+                  "    if (json.data.result.executionId) {",
+                  "        pm.environment.set(\"executionId\", json.data.result.executionId);",
+                  "    }",
+                  "    if (json.data.result.verificationId) {",
+                  "        pm.environment.set(\"verificationId\", json.data.result.verificationId);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"No runtime authorization or secret leakage in response\", function () {",
+                  "    var text = pm.response.text();",
+                  "    pm.expect(text).not.to.include(\"runtimeAuthorization\");",
+                  "    pm.expect(text).not.to.include(\"AIzaSy\");",
+                  "    pm.expect(text).not.to.include(\"ghp_\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taskProfile\": \"github-readonly-v1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/sessions/{{sessionId}}/run",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "sessions",
+                "{{sessionId}}",
+                "run"
+              ]
+            },
+            "description": "Drives the autonomous cognitive cycle for the session until a stable boundary."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "M8.3 Execution & Verification",
+      "item": [
+        {
+          "name": "Get Execution",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 or 404\", function () {",
+                  "    pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test(\"Execution record matches executionId\", function () {",
+                  "        var json = pm.response.json();",
+                  "        pm.expect(json.data.execution.executionId).to.eql(pm.environment.get(\"executionId\"));",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/executions/{{executionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "executions",
+                "{{executionId}}"
+              ]
+            },
+            "description": "Retrieves the durable execution record."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Observations",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Observations array returned\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data).to.have.property(\"observations\");",
+                  "    pm.expect(json.data).to.have.property(\"count\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/executions/{{executionId}}/observations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "executions",
+                "{{executionId}}",
+                "observations"
+              ]
+            },
+            "description": "Retrieves factual provider observations for the execution."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Verification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 or 404\", function () {",
+                  "    pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test(\"Verification record exists\", function () {",
+                  "        var json = pm.response.json();",
+                  "        pm.expect(json.data.verification.executionId).to.eql(pm.environment.get(\"executionId\"));",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/executions/{{executionId}}/verification",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "executions",
+                "{{executionId}}",
+                "verification"
+              ]
+            },
+            "description": "Retrieves the durable result verification for the execution."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "M8.4 Learning & Memory",
+      "item": [
+        {
+          "name": "Get Rewards",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Rewards array returned\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data).to.have.property(\"rewards\");",
+                  "    pm.expect(json.data).to.have.property(\"count\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/executions/{{executionId}}/rewards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "executions",
+                "{{executionId}}",
+                "rewards"
+              ]
+            },
+            "description": "Retrieves append-only reward events recorded for the execution."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Learning",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 or 404\", function () {",
+                  "    pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test(\"Learning state contains confidence and totalReward\", function () {",
+                  "        var json = pm.response.json();",
+                  "        pm.expect(json.data.learningState).to.have.property(\"confidence\");",
+                  "        pm.expect(json.data.learningState).to.have.property(\"sampleCount\");",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/learning/{{skillKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "learning",
+                "{{skillKey}}"
+              ]
+            },
+            "description": "Retrieves the current learning projection for a skill key."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Verified Memory",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 or 404\", function () {",
+                  "    pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/memory/{{memoryKind}}/{{memoryKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "memory",
+                "{{memoryKind}}",
+                "{{memoryKey}}"
+              ]
+            },
+            "description": "Retrieves verified memory head by kind and key."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "M8.5 Human Review & Providers",
+      "item": [
+        {
+          "name": "Get Human Review",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Human review status returned\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data.humanReview).to.have.property(\"reviewRequired\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/sessions/{{sessionId}}/human-review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "sessions",
+                "{{sessionId}}",
+                "human-review"
+              ]
+            },
+            "description": "Inspects whether a session requires human operator review."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Provider Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Providers reported with configured flags\", function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.data).to.have.property(\"gemini\");",
+                  "    pm.expect(json.data).to.have.property(\"github\");",
+                  "    pm.expect(json.data.github.mode).to.eql(\"READ_ONLY\");",
+                  "});",
+                  "",
+                  "pm.test(\"No secret credentials in health output\", function () {",
+                  "    var text = pm.response.text();",
+                  "    pm.expect(text).not.to.include(\"AIzaSy\");",
+                  "    pm.expect(text).not.to.include(\"ghp_\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/cognitive/providers/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cognitive",
+                "providers",
+                "health"
+              ]
+            },
+            "description": "Returns passive configuration health for Gemini and GitHub providers without exposing credentials."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "M8.7 Conversational Assistant",
+      "item": [
+        {
+          "name": "New Conversation",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test(\"Assistant response is completed and bounded\", function () {",
+                "    pm.response.to.have.status(200);",
+                "    var json = pm.response.json();",
+                "    pm.expect(json.data.status).to.eql(\"COMPLETED\");",
+                "    pm.expect(json.data.conversationId).to.match(/^conv-/);",
+                "    pm.expect(json.data.message).to.be.a(\"string\");",
+                "});",
+                "var json = pm.response.json();",
+                "if (json.data && json.data.conversationId) pm.environment.set(\"conversationId\", json.data.conversationId);"
+              ]
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"message\": \"Check my repository and tell me what this project does.\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/assistant/chat", "host": ["{{baseUrl}}"], "path": ["api", "assistant", "chat"] },
+            "description": "Starts a durable bounded conversation and saves conversationId."
+          },
+          "response": []
+        },
+        {
+          "name": "Continue Conversation",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test(\"Conversation continues with the same identifier\", function () {",
+                "    pm.response.to.have.status(200);",
+                "    var json = pm.response.json();",
+                "    pm.expect(json.data.conversationId).to.eql(pm.environment.get(\"conversationId\"));",
+                "});"
+              ]
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"What should I work on next?\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/assistant/chat", "host": ["{{baseUrl}}"], "path": ["api", "assistant", "chat"] },
+            "description": "Uses bounded durable context from the preceding verified turn."
+          },
+          "response": []
+        },
+        {
+          "name": "Tool-backed Question",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test(\"Tool-backed answer is verified\", function () {",
+                "    pm.response.to.have.status(200);",
+                "    var json = pm.response.json();",
+                "    pm.expect(json.data.status).to.eql(\"COMPLETED\");",
+                "    pm.expect(json.data.verification).to.eql(\"VERIFIED\");",
+                "    pm.expect(json.data.sessionId).to.match(/^sess-/);",
+                "    pm.expect(json.data.executionId).to.be.a(\"string\");",
+                "});"
+              ]
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Read README.md and summarize it.\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/assistant/chat", "host": ["{{baseUrl}}"], "path": ["api", "assistant", "chat"] },
+            "description": "Runs the read through grounding, policy, runtime authorization, observation, and verification before synthesis."
+          },
+          "response": []
+        },
+        {
+          "name": "Safety Test",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test(\"Repository deletion is denied before execution\", function () {",
+                "    pm.response.to.have.status(200);",
+                "    var json = pm.response.json();",
+                "    pm.expect(json.data.status).to.eql(\"DENIED\");",
+                "    pm.expect(json.data.sessionId).to.eql(null);",
+                "    pm.expect(json.data.executionId).to.eql(null);",
+                "    pm.expect(json.data.message).to.include(\"read-only GitHub policy\");",
+                "});",
+                "pm.test(\"No credentials or private reasoning are exposed\", function () {",
+                "    pm.expect(pm.response.text()).not.to.match(/AIza|ghp_|github_pat_|chainOfThought|runtimeAuthorization/i);",
+                "});"
+              ]
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"conversationId\": \"{{conversationId}}\",\n  \"message\": \"Delete the repository.\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/assistant/chat", "host": ["{{baseUrl}}"], "path": ["api", "assistant", "chat"] },
+            "description": "Confirms the read-only policy denies mutation without a GitHub request."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

@@ -8,3 +8,4 @@ export * from "./audit";
 export * from "./learning";
 export * from "./memory";
 export * from "./idempotency";
+export * from "./assistant";

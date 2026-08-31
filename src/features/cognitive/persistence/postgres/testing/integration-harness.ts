@@ -72,6 +72,8 @@ export async function cleanIntegrationTestTables(
 ): Promise<void> {
   await db.execute(sql`
     TRUNCATE TABLE
+      assistant_turns,
+      assistant_conversations,
       cues,
       cognitive_sessions,
       evidence_records,
