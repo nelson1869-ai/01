@@ -7,9 +7,7 @@ import {
 } from "../../../domain/execution-safety";
 import { assertLiveExecutionAuthorization } from "../../../orchestration/execution-authorization-guard";
 import { orchestrateAuthorizationIssuance } from "../../../orchestration/authorization-orchestrator";
-import {
-  dispatchAuthorizedOperation,
-} from "../../../orchestration/dispatch-orchestrator";
+import { dispatchAuthorizedOperation } from "../../../orchestration/dispatch-orchestrator";
 import {
   completeExecutionStep,
   finalizeExecutionFailure,
@@ -118,6 +116,7 @@ describe("live PostgreSQL dispatch adapter and reconciliation integration tests"
       candidateId,
       sessionId,
       cueId,
+      evaluationGeneration: 1,
       goal: "Test dispatch boundary",
       action: "fake.operation",
       confidence: 0.95,
@@ -377,7 +376,9 @@ describe("live PostgreSQL dispatch adapter and reconciliation integration tests"
 
     expect(result.operation.status).toBe("FAILED");
     expect(result.attempt.status).toBe("FAILED");
-    expect(result.attempt.errorSummary).toBe("Card declined: insufficient funds");
+    expect(result.attempt.errorSummary).toBe(
+      "Card declined: insufficient funds",
+    );
   });
 
   it("5. Timeout after possible send: -> UNKNOWN, not FAILED", async () => {
@@ -1233,7 +1234,9 @@ describe("live PostgreSQL dispatch adapter and reconciliation integration tests"
 
     expect(result.operation.status).toBe("FAILED");
     expect(result.attempt.status).toBe("FAILED");
-    expect(result.attempt.errorSummary).toContain("Local request serialization failed");
+    expect(result.attempt.errorSummary).toContain(
+      "Local request serialization failed",
+    );
   });
 
   it("32. orchestrateMarkInFlightUnknown recovers stranded in-flight operation", async () => {

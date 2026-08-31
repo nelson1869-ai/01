@@ -75,7 +75,11 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
   });
 
   async function seedAuthorizedPlan(params?: {
-    readonly steps?: readonly { stepId: string; ordinal: number; description: string }[];
+    readonly steps?: readonly {
+      stepId: string;
+      ordinal: number;
+      description: string;
+    }[];
     readonly dependencies?: readonly {
       stepId: string;
       dependsOnStepId: string;
@@ -121,6 +125,7 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       candidateId,
       sessionId,
       cueId,
+      evaluationGeneration: 1,
       goal: "Exercise durable execution state",
       action: "synthetic.operation",
       confidence: 0.95,
@@ -215,20 +220,16 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
     fixture: Awaited<ReturnType<typeof seedAuthorizedPlan>>,
     overrides?: Partial<Parameters<typeof prepareAuthorizedExecution>[2]>,
   ) {
-    return await prepareAuthorizedExecution(
-      context.db,
-      fixture.authorization,
-      {
-        commandIdempotencyKey: "prepare:lifecycle:1",
-        executionId: fixture.executionId,
-        sessionId: fixture.sessionId,
-        planId: fixture.planId,
-        expectedSessionRowVersion: fixture.session.rowVersion,
-        expectedSafetyGeneration: fixture.generation,
-        createdAt: T5,
-        ...overrides,
-      },
-    );
+    return await prepareAuthorizedExecution(context.db, fixture.authorization, {
+      commandIdempotencyKey: "prepare:lifecycle:1",
+      executionId: fixture.executionId,
+      sessionId: fixture.sessionId,
+      planId: fixture.planId,
+      expectedSessionRowVersion: fixture.session.rowVersion,
+      expectedSafetyGeneration: fixture.generation,
+      createdAt: T5,
+      ...overrides,
+    });
   }
 
   async function startExecution(
@@ -275,15 +276,13 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       {
         commandIdempotencyKey:
           params?.commandKey ?? `start-step:${stepId}:lifecycle:1`,
-        executionEventId:
-          params?.eventId ?? `execution-event-start-${stepId}`,
+        executionEventId: params?.eventId ?? `execution-event-start-${stepId}`,
         eventKey: params?.eventKey ?? `execution:start:${stepId}:1`,
         executionId: fixture.executionId,
         sessionId: fixture.sessionId,
         planId: fixture.planId,
         stepId,
-        expectedExecutionRowVersion:
-          params?.expectedExecutionRowVersion ?? 1,
+        expectedExecutionRowVersion: params?.expectedExecutionRowVersion ?? 1,
         expectedStepRowVersion: params?.expectedStepRowVersion ?? 0,
         expectedSafetyGeneration: fixture.generation,
         startedAt: T7,
@@ -294,7 +293,9 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
 
   async function reserve(
     fixture: Awaited<ReturnType<typeof seedAuthorizedPlan>>,
-    overrides?: Partial<Parameters<typeof reserveAuthorizedExecutionOperation>[2]>,
+    overrides?: Partial<
+      Parameters<typeof reserveAuthorizedExecutionOperation>[2]
+    >,
   ) {
     return await reserveAuthorizedExecutionOperation(
       context.db,
@@ -412,7 +413,12 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
         createdAt: T5,
       }),
     ).rejects.toThrow(PersistenceError);
-    expect(await executionRepository.findExecutionById(context.db, fixture.executionId)).toBeNull();
+    expect(
+      await executionRepository.findExecutionById(
+        context.db,
+        fixture.executionId,
+      ),
+    ).toBeNull();
   });
 
   it("4. rejects stale safety generation without creating execution", async () => {
@@ -425,14 +431,22 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       WHERE session_id = ${fixture.sessionId}
     `);
     await expect(prepare(fixture)).rejects.toThrow(PersistenceError);
-    expect(await executionRepository.findExecutionById(context.db, fixture.executionId)).toBeNull();
+    expect(
+      await executionRepository.findExecutionById(
+        context.db,
+        fixture.executionId,
+      ),
+    ).toBeNull();
   });
 
   it("5. replays preparation without duplicate execution, steps, or session update", async () => {
     const fixture = await seedAuthorizedPlan();
     const first = await prepare(fixture);
     const replay = await prepare(fixture);
-    const session = await sessionRepository.findSessionById(context.db, fixture.sessionId);
+    const session = await sessionRepository.findSessionById(
+      context.db,
+      fixture.sessionId,
+    );
     expect(first.isReplay).toBe(false);
     expect(replay.isReplay).toBe(true);
     expect(replay).not.toHaveProperty("authorization");
@@ -514,8 +528,12 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
         eventKey: "event-key:start:worker-b",
       }),
     ]);
-    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
-    const events = await context.db.execute(sql`SELECT count(*)::int AS count FROM execution_events`);
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled"),
+    ).toHaveLength(1);
+    const events = await context.db.execute(
+      sql`SELECT count(*)::int AS count FROM execution_events`,
+    );
     expect(events.rows[0]).toMatchObject({ count: 1 });
   });
 
@@ -581,7 +599,9 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
         eventKey: "event-key:step:worker-b",
       }),
     ]);
-    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled"),
+    ).toHaveLength(1);
   });
 
   it("16. rejects stale capability after safety revocation before step start", async () => {
@@ -626,7 +646,9 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
     const replay = await reserve(fixture);
     expect(first.isReplay).toBe(false);
     expect(replay.isReplay).toBe(true);
-    const rows = await context.db.execute(sql`SELECT count(*)::int AS count FROM execution_operations`);
+    const rows = await context.db.execute(
+      sql`SELECT count(*)::int AS count FROM execution_operations`,
+    );
     expect(rows.rows[0]).toMatchObject({ count: 1 });
   });
 
@@ -648,8 +670,15 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
     const fixture = await seedAuthorizedPlan();
     await prepareStartStepAndReserve(fixture);
     const result = await beginAttempt(fixture);
-    expect(result.operation).toMatchObject({ status: "IN_FLIGHT", attemptCount: 1, rowVersion: 1 });
-    expect(result.attempt).toMatchObject({ status: "IN_FLIGHT", attemptNumber: 1 });
+    expect(result.operation).toMatchObject({
+      status: "IN_FLIGHT",
+      attemptCount: 1,
+      rowVersion: 1,
+    });
+    expect(result.attempt).toMatchObject({
+      status: "IN_FLIGHT",
+      attemptNumber: 1,
+    });
   });
 
   it("22. concurrent begin-attempt has exactly one winner", async () => {
@@ -665,8 +694,12 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
         attemptId: "attempt-worker-b",
       }),
     ]);
-    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
-    const rows = await context.db.execute(sql`SELECT count(*)::int AS count FROM execution_operation_attempts`);
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled"),
+    ).toHaveLength(1);
+    const rows = await context.db.execute(
+      sql`SELECT count(*)::int AS count FROM execution_operation_attempts`,
+    );
     expect(rows.rows[0]).toMatchObject({ count: 1 });
   });
 
@@ -698,7 +731,9 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       finishedAt: T7,
     });
     expect(result.operation.status).toBe("FAILED");
-    expect(result.attempt.errorSummary).toBe("Synthetic deterministic failure.");
+    expect(result.attempt.errorSummary).toBe(
+      "Synthetic deterministic failure.",
+    );
   });
 
   it("25. records UNKNOWN with uncertainty and reconciliation REQUIRED", async () => {
@@ -710,13 +745,15 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       attemptId: "attempt-lifecycle-1",
       expectedOperationRowVersion: 1,
       outcome: "UNKNOWN",
-      uncertaintyReason: "Synthetic response was lost after possible acceptance.",
+      uncertaintyReason:
+        "Synthetic response was lost after possible acceptance.",
       finishedAt: T7,
     });
     expect(result.operation).toMatchObject({
       status: "UNKNOWN",
       reconciliationStatus: "REQUIRED",
-      uncertaintyReason: "Synthetic response was lost after possible acceptance.",
+      uncertaintyReason:
+        "Synthetic response was lost after possible acceptance.",
     });
   });
 
@@ -732,7 +769,11 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       uncertaintyReason: "Outcome requires reconciliation.",
       finishedAt: T7,
     });
-    const step = await executionStepRepository.findStep(context.db, fixture.executionId, "step-1");
+    const step = await executionStepRepository.findStep(
+      context.db,
+      fixture.executionId,
+      "step-1",
+    );
     expect(step?.status).toBe("RUNNING");
   });
 
@@ -817,7 +858,10 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       completedAt: T7,
       errorSummary: "Deterministic operation failure.",
     });
-    expect(result.step).toMatchObject({ status: "FAILED", error: "Deterministic operation failure." });
+    expect(result.step).toMatchObject({
+      status: "FAILED",
+      error: "Deterministic operation failure.",
+    });
   });
 
   it("30. finalizes execution SUCCEEDED only when every step SUCCEEDED", async () => {
@@ -890,7 +934,10 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       completedAt: T7,
       errorSummary: "Execution contains a failed step.",
     });
-    expect(result.execution).toMatchObject({ status: "FAILED", error: "Execution contains a failed step." });
+    expect(result.execution).toMatchObject({
+      status: "FAILED",
+      error: "Execution contains a failed step.",
+    });
   });
 
   it("32. execution events use unique monotonically ordered row-version sequences", async () => {
@@ -902,7 +949,9 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       WHERE execution_id = ${fixture.executionId}
       ORDER BY transition_sequence
     `);
-    expect(events.rows.map((row) => Number(row.transition_sequence))).toEqual([1, 2]);
+    expect(events.rows.map((row) => Number(row.transition_sequence))).toEqual([
+      1, 2,
+    ]);
   });
 
   it("33. event insert conflict rolls back its parent step transition", async () => {
@@ -912,7 +961,11 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       startStep(fixture, { eventKey: "execution:start:lifecycle:1" }),
     ).rejects.toThrow();
     const [step, execution] = await Promise.all([
-      executionStepRepository.findStep(context.db, fixture.executionId, "step-1"),
+      executionStepRepository.findStep(
+        context.db,
+        fixture.executionId,
+        "step-1",
+      ),
       executionRepository.findExecutionById(context.db, fixture.executionId),
     ]);
     expect(step?.status).toBe("PENDING");
@@ -922,15 +975,34 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
   it("34. stale execution rowVersion rolls back start", async () => {
     const fixture = await seedAuthorizedPlan();
     await prepare(fixture);
-    await expect(startExecution(fixture, { expectedExecutionRowVersion: 99 })).rejects.toThrow(PersistenceError);
-    expect((await executionRepository.findExecutionById(context.db, fixture.executionId))?.status).toBe("PENDING");
+    await expect(
+      startExecution(fixture, { expectedExecutionRowVersion: 99 }),
+    ).rejects.toThrow(PersistenceError);
+    expect(
+      (
+        await executionRepository.findExecutionById(
+          context.db,
+          fixture.executionId,
+        )
+      )?.status,
+    ).toBe("PENDING");
   });
 
   it("35. stale step rowVersion rolls back step start", async () => {
     const fixture = await seedAuthorizedPlan();
     await prepareAndStart(fixture);
-    await expect(startStep(fixture, { expectedStepRowVersion: 99 })).rejects.toThrow(PersistenceError);
-    expect((await executionStepRepository.findStep(context.db, fixture.executionId, "step-1"))?.status).toBe("PENDING");
+    await expect(
+      startStep(fixture, { expectedStepRowVersion: 99 }),
+    ).rejects.toThrow(PersistenceError);
+    expect(
+      (
+        await executionStepRepository.findStep(
+          context.db,
+          fixture.executionId,
+          "step-1",
+        )
+      )?.status,
+    ).toBe("PENDING");
   });
 
   it("36. stale operation rowVersion rolls back outcome", async () => {
@@ -946,14 +1018,27 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
         finishedAt: T7,
       }),
     ).rejects.toThrow(PersistenceError);
-    expect((await executionOperationRepository.findOperationById(context.db, "operation-lifecycle"))?.status).toBe("IN_FLIGHT");
+    expect(
+      (
+        await executionOperationRepository.findOperationById(
+          context.db,
+          "operation-lifecycle",
+        )
+      )?.status,
+    ).toBe("IN_FLIGHT");
   });
 
   async function blockRunningExecution(
     fixture: Awaited<ReturnType<typeof seedAuthorizedPlan>>,
   ) {
-    const session = await sessionRepository.findSessionById(context.db, fixture.sessionId);
-    const execution = await executionRepository.findExecutionById(context.db, fixture.executionId);
+    const session = await sessionRepository.findSessionById(
+      context.db,
+      fixture.sessionId,
+    );
+    const execution = await executionRepository.findExecutionById(
+      context.db,
+      fixture.executionId,
+    );
     if (!session || !execution) {
       throw new Error("Expected durable session and execution before failure.");
     }
@@ -991,14 +1076,19 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       WHERE execution_id = ${fixture.executionId}
       ORDER BY transition_sequence
     `);
-    expect(events.rows.map((row) => row.to_status)).toEqual(["RUNNING", "BLOCKED"]);
+    expect(events.rows.map((row) => row.to_status)).toEqual([
+      "RUNNING",
+      "BLOCKED",
+    ]);
   });
 
   it("38. no new step starts after execution is BLOCKED", async () => {
     const fixture = await seedAuthorizedPlan();
     await prepareAndStart(fixture);
     await blockRunningExecution(fixture);
-    await expect(startStep(fixture, { expectedExecutionRowVersion: 2 })).rejects.toThrow(PersistenceError);
+    await expect(
+      startStep(fixture, { expectedExecutionRowVersion: 2 }),
+    ).rejects.toThrow(PersistenceError);
   });
 
   it("39. restart reloads durable state but cannot reconstruct authorization", async () => {
@@ -1006,9 +1096,19 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
     await prepareStartStepAndReserve(fixture);
     const [execution, step, operation, safety] = await Promise.all([
       executionRepository.findExecutionById(context.db, fixture.executionId),
-      executionStepRepository.findStep(context.db, fixture.executionId, "step-1"),
-      executionOperationRepository.findOperationById(context.db, "operation-lifecycle"),
-      safetyRepository.findSafetyStateBySessionId(context.db, fixture.sessionId),
+      executionStepRepository.findStep(
+        context.db,
+        fixture.executionId,
+        "step-1",
+      ),
+      executionOperationRepository.findOperationById(
+        context.db,
+        "operation-lifecycle",
+      ),
+      safetyRepository.findSafetyStateBySessionId(
+        context.db,
+        fixture.sessionId,
+      ),
     ]);
     expect(execution?.status).toBe("RUNNING");
     expect(step?.status).toBe("RUNNING");
@@ -1019,13 +1119,18 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
     }
     const restored = mapStoredSafetyToDomain(safety);
     expect(isAllowedExecutionSafetyState(restored)).toBe(false);
-    expect(() => assertLiveExecutionAuthorization(restored, safety.generation)).toThrow();
+    expect(() =>
+      assertLiveExecutionAuthorization(restored, safety.generation),
+    ).toThrow();
   });
 
   it("40. fresh process without capability cannot progress operation toward side effect", async () => {
     const fixture = await seedAuthorizedPlan();
     await prepareStartStepAndReserve(fixture);
-    const safety = await safetyRepository.findSafetyStateBySessionId(context.db, fixture.sessionId);
+    const safety = await safetyRepository.findSafetyStateBySessionId(
+      context.db,
+      fixture.sessionId,
+    );
     if (!safety) {
       throw new Error("Expected stored safety state.");
     }
@@ -1048,7 +1153,14 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
         },
       ),
     ).rejects.toThrow(PersistenceError);
-    expect((await executionOperationRepository.findOperationById(context.db, "operation-lifecycle"))?.status).toBe("PENDING");
+    expect(
+      (
+        await executionOperationRepository.findOperationById(
+          context.db,
+          "operation-lifecycle",
+        )
+      )?.status,
+    ).toBe("PENDING");
   });
 
   it("41. composite foreign key rejects an operation not bound to durable step state", async () => {
@@ -1223,6 +1335,7 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
       candidateId: "candidate-other",
       sessionId: fixture.sessionId,
       cueId: fixture.cueId,
+      evaluationGeneration: 1,
       goal: "Other goal",
       action: "synthetic.other",
       confidence: 0.9,
@@ -1312,7 +1425,9 @@ describe("live PostgreSQL durable execution lifecycle integration tests", () => 
     const unauthenticatedDomainSafety = mapStoredSafetyToDomain(storedSafety!);
 
     // Rehydrated domain safety is UNAUTHORIZED and has no private brand
-    expect(isAllowedExecutionSafetyState(unauthenticatedDomainSafety)).toBe(false);
+    expect(isAllowedExecutionSafetyState(unauthenticatedDomainSafety)).toBe(
+      false,
+    );
 
     // Attempting any NEW progression (e.g. reserve another operation) fails closed
     await expect(

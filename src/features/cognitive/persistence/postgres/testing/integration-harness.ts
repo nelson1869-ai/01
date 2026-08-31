@@ -74,6 +74,7 @@ export async function cleanIntegrationTestTables(
     TRUNCATE TABLE
       assistant_turns,
       assistant_conversations,
+      authoritative_perception_snapshots,
       cues,
       cognitive_sessions,
       evidence_records,

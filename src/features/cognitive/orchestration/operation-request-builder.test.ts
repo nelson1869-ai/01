@@ -10,6 +10,7 @@ describe("DefaultOperationRequestBuilder", () => {
     candidateId: "cand-1",
     sessionId: "sess-1",
     cueId: "cue-1",
+    evaluationGeneration: 1,
     goal: "Read the project README.md documentation",
     action: "github.contents.read",
     confidence: 0.95,

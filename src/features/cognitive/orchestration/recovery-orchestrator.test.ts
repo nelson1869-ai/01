@@ -14,6 +14,7 @@ describe("recovery orchestrator unit tests", () => {
     failureCount: 2,
     retryCount: 0,
     maxRetries: 3,
+    evaluationGeneration: 1,
     cooldownUntil: "2026-08-31T00:04:00.000Z",
     currentCandidateId: null,
     currentPlanId: null,

@@ -32,17 +32,88 @@ export class GitHubResultVerifier implements ResultVerifier {
       };
     }
 
-    const resultObj = (data.result && typeof data.result === "object"
-      ? data.result
-      : {}) as Record<string, unknown>;
-    const repoMatch =
-      data.repository === ALLOWED_GITHUB_REPO ||
-      resultObj.repository === ALLOWED_GITHUB_REPO ||
-      resultObj.fullName === ALLOWED_GITHUB_REPO ||
-      resultObj.name === "01";
+    const operationKind = (data.operationKind as string) || "";
+    const rawResult = data.result;
 
-    // Check if observation indicates confirmed provider success with factual target repo
-    if (data.outcome === "CONFIRMED_SUCCESS" && repoMatch) {
+    if (
+      !rawResult ||
+      typeof rawResult !== "object" ||
+      Object.keys(rawResult).length === 0
+    ) {
+      if (
+        (operationKind === "github.issues.list" ||
+          operationKind === "github.pull_requests.list") &&
+        Array.isArray(rawResult)
+      ) {
+        // Empty issue/PR list is valid
+      } else {
+        if (operationKind === "github.repo.get") {
+          return {
+            status: "FAILED",
+            confidence: 0.0,
+            reason:
+              "Observation missing expected property 'name' for repository.",
+            verifierVersion: this.version,
+          };
+        }
+        if (operationKind === "github.contents.read") {
+          return {
+            status: "FAILED",
+            confidence: 0.0,
+            reason: "Observation missing expected file property 'content'.",
+            verifierVersion: this.version,
+          };
+        }
+        return {
+          status: "FAILED",
+          confidence: 0.0,
+          reason: `Observation result payload is empty or invalid for ${operationKind}.`,
+          verifierVersion: this.version,
+        };
+      }
+    }
+
+    const resultObj = rawResult as Record<string, unknown>;
+
+    if (operationKind === "github.repo.get") {
+      const name = (resultObj.name as string) || "";
+      const fullName =
+        (resultObj.full_name as string) || (resultObj.fullName as string) || "";
+      if (!name && !fullName) {
+        return {
+          status: "FAILED",
+          confidence: 0.0,
+          reason:
+            "Observation missing expected property 'name' or 'full_name' for repository.",
+          verifierVersion: this.version,
+        };
+      }
+      if (
+        (fullName && fullName !== ALLOWED_GITHUB_REPO) ||
+        (name && name !== "01" && fullName !== ALLOWED_GITHUB_REPO)
+      ) {
+        return {
+          status: "FAILED",
+          confidence: 0.0,
+          reason: `Result repository "${fullName || name}" does not match allowed repository "${ALLOWED_GITHUB_REPO}".`,
+          verifierVersion: this.version,
+        };
+      }
+    }
+
+    if (operationKind === "github.contents.read") {
+      const content = resultObj.content;
+      if (content === undefined || content === null) {
+        return {
+          status: "FAILED",
+          confidence: 0.0,
+          reason: "Observation missing expected file property 'content'.",
+          verifierVersion: this.version,
+        };
+      }
+    }
+
+    if (data.outcome === "CONFIRMED_SUCCESS") {
       return {
         status: "VERIFIED",
         confidence: 1.0,

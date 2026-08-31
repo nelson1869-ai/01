@@ -104,6 +104,7 @@ describe("live PostgreSQL durable observation and result verification integratio
       candidateId,
       sessionId,
       cueId,
+      evaluationGeneration: 1,
       goal: "Test observation and verification boundary",
       action: "fake.operation",
       confidence: 0.95,
@@ -291,14 +292,18 @@ describe("live PostgreSQL durable observation and result verification integratio
 
     expect(obsResult.isReplay).toBe(false);
     expect(obsResult.observation.source).toBe("provider-dispatch");
-    expect(obsResult.observation.summary).toContain("Provider confirmed successful");
+    expect(obsResult.observation.summary).toContain(
+      "Provider confirmed successful",
+    );
 
     const reloaded = await observationRepository.findObservationById(
       context.db,
       "obs-dispatch-1",
     );
     expect(reloaded).not.toBeNull();
-    expect((reloaded?.data as Record<string, unknown>).outcome).toBe("CONFIRMED_SUCCESS");
+    expect((reloaded?.data as Record<string, unknown>).outcome).toBe(
+      "CONFIRMED_SUCCESS",
+    );
   });
 
   it("2. Deterministic provider failure -> durable observation", async () => {
@@ -326,9 +331,9 @@ describe("live PostgreSQL durable observation and result verification integratio
     });
 
     expect(obsResult.observation.summary).toContain("Account limit exceeded");
-    expect((obsResult.observation.data as Record<string, unknown>).outcome).toBe(
-      "CONFIRMED_FAILURE",
-    );
+    expect(
+      (obsResult.observation.data as Record<string, unknown>).outcome,
+    ).toBe("CONFIRMED_FAILURE");
   });
 
   it("3. UNKNOWN -> indeterminate observation", async () => {
@@ -352,9 +357,9 @@ describe("live PostgreSQL durable observation and result verification integratio
       observedAt: T8,
     });
 
-    expect((obsResult.observation.data as Record<string, unknown>).outcome).toBe(
-      "INDETERMINATE",
-    );
+    expect(
+      (obsResult.observation.data as Record<string, unknown>).outcome,
+    ).toBe("INDETERMINATE");
   });
 
   it("4. Reconciliation success -> new durable observation", async () => {
@@ -391,9 +396,9 @@ describe("live PostgreSQL durable observation and result verification integratio
     });
 
     expect(obsResult.observation.source).toBe("provider-reconciliation");
-    expect((obsResult.observation.data as Record<string, unknown>).outcome).toBe(
-      "CONFIRMED_SUCCEEDED",
-    );
+    expect(
+      (obsResult.observation.data as Record<string, unknown>).outcome,
+    ).toBe("CONFIRMED_SUCCEEDED");
   });
 
   it("5. Reconciliation not applied -> durable observation", async () => {
@@ -429,9 +434,9 @@ describe("live PostgreSQL durable observation and result verification integratio
       observedAt: T8,
     });
 
-    expect((obsResult.observation.data as Record<string, unknown>).outcome).toBe(
-      "CONFIRMED_NOT_APPLIED",
-    );
+    expect(
+      (obsResult.observation.data as Record<string, unknown>).outcome,
+    ).toBe("CONFIRMED_NOT_APPLIED");
   });
 
   it("6. Observation replay does not duplicate", async () => {
@@ -598,8 +603,14 @@ describe("live PostgreSQL durable observation and result verification integratio
       observedAt: T8,
     });
 
-    const digestA = computeObservationSetDigest([o1.observation, o2.observation]);
-    const digestB = computeObservationSetDigest([o2.observation, o1.observation]);
+    const digestA = computeObservationSetDigest([
+      o1.observation,
+      o2.observation,
+    ]);
+    const digestB = computeObservationSetDigest([
+      o2.observation,
+      o1.observation,
+    ]);
 
     expect(digestA).toBe(digestB);
   });
@@ -993,7 +1004,9 @@ describe("live PostgreSQL durable observation and result verification integratio
       verifiedAt: T8,
     });
 
-    const conflictingVerifier = new DeterministicResultVerifier("test-verifier-v1");
+    const conflictingVerifier = new DeterministicResultVerifier(
+      "test-verifier-v1",
+    );
     conflictingVerifier.verify = () => ({
       status: "FAILED",
       confidence: 1.0,
@@ -1063,7 +1076,9 @@ describe("live PostgreSQL durable observation and result verification integratio
       observedAt: T8,
     });
 
-    expect(obs.observation.summary).toBe("Side effect confirmed after revocation");
+    expect(obs.observation.summary).toBe(
+      "Side effect confirmed after revocation",
+    );
   });
 
   it("25. Blocked execution may be VERIFIED without resurrecting execution state", async () => {
@@ -1178,10 +1193,11 @@ describe("live PostgreSQL durable observation and result verification integratio
     });
 
     // Simulate process restart: fresh repository query
-    const reloaded = await observationRepository.findManyObservationsByExecutionId(
-      context.db,
-      fixture.executionId,
-    );
+    const reloaded =
+      await observationRepository.findManyObservationsByExecutionId(
+        context.db,
+        fixture.executionId,
+      );
     expect(reloaded).toHaveLength(1);
     expect(reloaded[0].observationId).toBe("obs-27");
   });

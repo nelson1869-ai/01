@@ -23,12 +23,20 @@ import { groundingRepository } from "../persistence/postgres/repositories/ground
 import { learningRepository } from "../persistence/postgres/repositories/learning-repository";
 import { memoryRepository } from "../persistence/postgres/repositories/memory-repository";
 import { observationRepository } from "../persistence/postgres/repositories/observation-repository";
+import { perceptionSnapshotRepository } from "../persistence/postgres/repositories/perception-snapshot-repository";
 import { planRepository } from "../persistence/postgres/repositories/plan-repository";
 import { policyRepository } from "../persistence/postgres/repositories/policy-repository";
 import { safetyRepository } from "../persistence/postgres/repositories/safety-repository";
 import { sessionRepository } from "../persistence/postgres/repositories/session-repository";
 import { verificationRepository } from "../persistence/postgres/repositories/verification-repository";
+import { persistFailureRecovery } from "../persistence/postgres/transactions/persist-failure-recovery";
+import { createCanonicalFingerprint } from "../persistence/postgres/utils/canonical-fingerprint";
 import type { DatabaseClient } from "../persistence/postgres/transactions/transaction-executor";
+import {
+  parseGitHubTargetSpec,
+  type GitHubTargetSpec,
+} from "../domain/target-spec";
+import { assertDataSecurity } from "../security/secret-safety";
 import { orchestrateAuthorizationIssuance } from "./authorization-orchestrator";
 import { rankCandidates } from "./candidate-ranking";
 import type {
@@ -43,6 +51,7 @@ import {
   assembleCognitiveContext,
   assertContextSecurity,
   type MemoryHeadRequest,
+  type PerceptionResult,
 } from "./context-assembler";
 import { dispatchAuthorizedOperation } from "./dispatch-orchestrator";
 import { prepareAuthorizedExecution } from "./execution-preparation-orchestrator";
@@ -143,6 +152,71 @@ export interface SingleTransitionResult {
   readonly runtimeAuthorization?: AllowedExecutionSafetyState;
 }
 
+async function getOrComputePerceptionSnapshot(
+  db: DatabaseClient,
+  session: PersistedCognitiveSession,
+  cue: PersistedCueIngress,
+  perceptionPort: PerceptionPort,
+  now: string,
+): Promise<{ perception: PerceptionResult; targetSpec: GitHubTargetSpec }> {
+  const existing =
+    await perceptionSnapshotRepository.findBySessionAndGeneration(
+      db,
+      session.sessionId,
+      session.evaluationGeneration,
+    );
+
+  if (existing) {
+    const targetSpec =
+      (existing.targetSpec as GitHubTargetSpec | null) ??
+      parseGitHubTargetSpec(
+        (existing.structuredFacts?.action as string) || "",
+        existing.summary,
+        existing.structuredFacts,
+      );
+    return {
+      perception: {
+        summary: existing.summary,
+        structuredFacts: existing.structuredFacts,
+        perceivedAt: existing.perceivedAt,
+      },
+      targetSpec,
+    };
+  }
+
+  // Compute fresh perception once per generation
+  const rawPerception = await perceptionPort.perceive(cue);
+  assertDataSecurity(rawPerception, "perception");
+
+  const targetSpec = parseGitHubTargetSpec(
+    (rawPerception.structuredFacts?.action as string) || "",
+    rawPerception.summary,
+    rawPerception.structuredFacts,
+  );
+
+  const snapshotId = `psnap:${session.sessionId}:gen${session.evaluationGeneration}`;
+  const saved = await perceptionSnapshotRepository.saveSnapshot(db, {
+    snapshotId,
+    sessionId: session.sessionId,
+    cueId: cue.cueId,
+    evaluationGeneration: session.evaluationGeneration,
+    summary: rawPerception.summary,
+    structuredFacts: rawPerception.structuredFacts,
+    targetSpec: targetSpec as unknown as Record<string, unknown>,
+    perceivedAt: rawPerception.perceivedAt || now,
+    createdAt: now,
+  });
+
+  return {
+    perception: {
+      summary: saved.summary,
+      structuredFacts: saved.structuredFacts,
+      perceivedAt: saved.perceivedAt,
+    },
+    targetSpec,
+  };
+}
+
 /**
  * Advance cognitive cycle by exactly ONE durable phase transition.
  * Uses optimistic concurrency CAS (row_version) on all session state updates.
@@ -231,8 +305,14 @@ export async function advanceCognitiveCycle(
         );
       }
 
-      // Invoke perception port OUTSIDE db transaction
-      const perception = await ports.perception.perceive(cue);
+      // Persist or load authoritative perception snapshot for current generation
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
 
       const updated = await transitionSessionPhase(
         db,
@@ -245,9 +325,14 @@ export async function advanceCognitiveCycle(
 
     case "BUILD_CONTEXT": {
       const cue = await getRequiredCue(db, session);
-      const perception = await ports.perception.perceive(cue);
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
 
-      // Validate base task context
       const updated = await transitionSessionPhase(
         db,
         session,
@@ -259,9 +344,14 @@ export async function advanceCognitiveCycle(
 
     case "RETRIEVE_MEMORY": {
       const cue = await getRequiredCue(db, session);
-      const perception = await ports.perception.perceive(cue);
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
 
-      // Explicitly load requested verified memory heads and learning projection
       const context = await assembleCognitiveContext(db, {
         session,
         cue,
@@ -283,17 +373,25 @@ export async function advanceCognitiveCycle(
     case "GENERATE_CANDIDATES": {
       const cue = await getRequiredCue(db, session);
 
-      // Replay / restart optimization: If candidates already exist for this cue, reuse them without calling generator
-      const existingCandidates = await candidateRepository.findCandidatesByCueId(
-        db,
-        cue.cueId,
-      );
+      // Replay / restart optimization: Reuse candidates for this specific evaluation generation
+      const existingCandidates =
+        await candidateRepository.findCandidatesBySessionAndGeneration(
+          db,
+          session.sessionId,
+          session.evaluationGeneration,
+        );
       if (existingCandidates.length > 0) {
         const updated = await transitionSessionPhase(db, session, "SCORE", now);
         return { isBoundary: false, nextSession: updated };
       }
 
-      const perception = await ports.perception.perceive(cue);
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
       const context = await assembleCognitiveContext(db, {
         session,
         cue,
@@ -306,17 +404,25 @@ export async function advanceCognitiveCycle(
       const generated =
         await ports.candidateGenerator.generateCandidates(context);
 
-      // Validate candidates and persist
-      for (const gen of generated) {
+      for (let idx = 0; idx < generated.length; idx++) {
+        const gen = generated[idx];
         if (gen.cueId !== cue.cueId) {
           throw PersistenceError.invalidPersistedState(
             `Cross-cue candidate rejected: candidate cueId "${gen.cueId}" does not match session cueId "${cue.cueId}".`,
           );
         }
+
+        const proposalHash = createCanonicalFingerprint({
+          goal: gen.goal,
+          action: gen.action,
+        }).slice(0, 12);
+        const candidateId = `cand:${session.sessionId}:gen${session.evaluationGeneration}:${idx + 1}:${proposalHash}`;
+
         const candidate: PersistedCandidateAction = {
-          candidateId: gen.candidateId,
+          candidateId,
           sessionId: session.sessionId,
           cueId: cue.cueId,
+          evaluationGeneration: session.evaluationGeneration,
           goal: gen.goal,
           action: gen.action,
           confidence: gen.confidence,
@@ -338,13 +444,14 @@ export async function advanceCognitiveCycle(
 
     case "SCORE": {
       const cue = await getRequiredCue(db, session);
-      const candidates = await candidateRepository.findCandidatesByCueId(
-        db,
-        cue.cueId,
-      );
+      const candidates =
+        await candidateRepository.findCandidatesBySessionAndGeneration(
+          db,
+          session.sessionId,
+          session.evaluationGeneration,
+        );
 
       if (candidates.length === 0) {
-        // Zero candidates -> transition to CLEAR_WORKING_MEMORY to return to IDLE
         const updated = await transitionSessionPhase(
           db,
           session,
@@ -355,7 +462,13 @@ export async function advanceCognitiveCycle(
         return { isBoundary: false, nextSession: updated };
       }
 
-      const perception = await ports.perception.perceive(cue);
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
       const context = await assembleCognitiveContext(db, {
         session,
         cue,
@@ -429,8 +542,20 @@ export async function advanceCognitiveCycle(
         );
       }
 
+      if (candidate.evaluationGeneration !== session.evaluationGeneration) {
+        throw PersistenceError.stateConflict(
+          `Candidate evaluationGeneration (${candidate.evaluationGeneration}) does not match session (${session.evaluationGeneration}).`,
+        );
+      }
+
       const cue = await getRequiredCue(db, session);
-      const perception = await ports.perception.perceive(cue);
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
       const context = await assembleCognitiveContext(db, {
         session,
         cue,
@@ -516,6 +641,12 @@ export async function advanceCognitiveCycle(
         );
       }
 
+      if (candidate.evaluationGeneration !== session.evaluationGeneration) {
+        throw PersistenceError.stateConflict(
+          `Candidate evaluationGeneration (${candidate.evaluationGeneration}) does not match session (${session.evaluationGeneration}).`,
+        );
+      }
+
       const grounding =
         await groundingRepository.findGroundingResultByCandidateId(
           db,
@@ -528,7 +659,13 @@ export async function advanceCognitiveCycle(
       }
 
       const cue = await getRequiredCue(db, session);
-      const perception = await ports.perception.perceive(cue);
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
       const context = await assembleCognitiveContext(db, {
         session,
         cue,
@@ -641,6 +778,12 @@ export async function advanceCognitiveCycle(
         );
       }
 
+      if (candidate.evaluationGeneration !== session.evaluationGeneration) {
+        throw PersistenceError.stateConflict(
+          `Candidate evaluationGeneration (${candidate.evaluationGeneration}) does not match session (${session.evaluationGeneration}).`,
+        );
+      }
+
       const auth = runtimeAuthorization;
       if (!auth) {
         // Authorization capability was lost (e.g. process restart).
@@ -660,7 +803,13 @@ export async function advanceCognitiveCycle(
       }
 
       const cue = await getRequiredCue(db, session);
-      const perception = await ports.perception.perceive(cue);
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
       const context = await assembleCognitiveContext(db, {
         session,
         cue,
@@ -674,6 +823,14 @@ export async function advanceCognitiveCycle(
         candidate,
         context,
       );
+
+      // Enforce single-step execution at plan validation boundary BEFORE execution preparation
+      if (proposedPlan.steps.length !== 1) {
+        throw PersistenceError.invalidPersistedState(
+          `Action plan "${proposedPlan.planId}" contains ${proposedPlan.steps.length} steps. The current runtime executor explicitly supports single-step plans only.`,
+          { planId: proposedPlan.planId, stepCount: proposedPlan.steps.length },
+        );
+      }
 
       const planRecord: PersistedActionPlan = {
         planId: proposedPlan.planId,
@@ -717,13 +874,18 @@ export async function advanceCognitiveCycle(
 
     case "DURABLE_EXECUTION": {
       const plan = await getRequiredPlan(db, session);
+      if (plan.steps.length !== 1) {
+        throw PersistenceError.invalidPersistedState(
+          `Action plan "${plan.planId}" has ${plan.steps.length} steps; single-step runtime only supported.`,
+        );
+      }
+
       const executionId = `exec:${session.sessionId}:${plan.planId}`;
       const firstStep = plan.steps[0];
       const operationId = `op:${executionId}:${firstStep.stepId}`;
 
       const auth = runtimeAuthorization;
       if (!auth) {
-        // Capability lost (e.g. process restart) -> return to BUILD_CONTEXT to acquire fresh evaluation provenance
         const resetSession = await transitionSessionPhase(
           db,
           session,
@@ -749,12 +911,29 @@ export async function advanceCognitiveCycle(
       }
 
       const candidate = await getRequiredCandidate(db, session);
+      const cue = await getRequiredCue(db, session);
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
+      const context = await assembleCognitiveContext(db, {
+        session,
+        cue,
+        perception,
+        skillKey: options.skillKey,
+        memoryRequests: options.memoryRequests,
+      });
+
       const requestBuilder =
         ports.requestBuilder ?? new DefaultOperationRequestBuilder();
       const builtRequest = requestBuilder.buildOperationRequest(
         candidate,
         plan,
         firstStep,
+        context,
       );
 
       // Start execution and first step if PENDING
@@ -807,7 +986,9 @@ export async function advanceCognitiveCycle(
       }
 
       // Transition session from DURABLE_EXECUTION to ACT
-      const updated = await transitionSessionPhase(db, session, "ACT", now);
+      const updated = await transitionSessionPhase(db, session, "ACT", now, {
+        currentExecutionId: executionId,
+      });
       return {
         isBoundary: false,
         nextSession: updated,
@@ -817,13 +998,18 @@ export async function advanceCognitiveCycle(
 
     case "ACT": {
       const plan = await getRequiredPlan(db, session);
+      if (plan.steps.length !== 1) {
+        throw PersistenceError.invalidPersistedState(
+          `Action plan "${plan.planId}" has ${plan.steps.length} steps; single-step runtime only supported.`,
+        );
+      }
+
       const executionId = `exec:${session.sessionId}:${plan.planId}`;
       const firstStep = plan.steps[0];
       const operationId = `op:${executionId}:${firstStep.stepId}`;
 
       const auth = runtimeAuthorization;
       if (!auth) {
-        // Capability lost (e.g. process restart) -> return to BUILD_CONTEXT to acquire fresh evaluation provenance
         const resetSession = await transitionSessionPhase(
           db,
           session,
@@ -849,7 +1035,6 @@ export async function advanceCognitiveCycle(
       }
 
       if (op.status === "IN_FLIGHT" && op.attemptCount > 0) {
-        // Prior crashed attempt in flight -> stop at reconciliation boundary
         return {
           isBoundary: true,
           cycleResult: {
@@ -877,12 +1062,29 @@ export async function advanceCognitiveCycle(
       }
 
       const candidate = await getRequiredCandidate(db, session);
+      const cue = await getRequiredCue(db, session);
+      const { perception } = await getOrComputePerceptionSnapshot(
+        db,
+        session,
+        cue,
+        ports.perception,
+        now,
+      );
+      const context = await assembleCognitiveContext(db, {
+        session,
+        cue,
+        perception,
+        skillKey: options.skillKey,
+        memoryRequests: options.memoryRequests,
+      });
+
       const requestBuilder =
         ports.requestBuilder ?? new DefaultOperationRequestBuilder();
       const builtRequest = requestBuilder.buildOperationRequest(
         candidate,
         plan,
         firstStep,
+        context,
       );
 
       // Dispatch operation OUTSIDE db transaction
@@ -929,6 +1131,12 @@ export async function advanceCognitiveCycle(
 
     case "OBSERVE": {
       const plan = await getRequiredPlan(db, session);
+      if (plan.steps.length !== 1) {
+        throw PersistenceError.invalidPersistedState(
+          `Action plan "${plan.planId}" has ${plan.steps.length} steps; single-step runtime only supported.`,
+        );
+      }
+
       const executionId = `exec:${session.sessionId}:${plan.planId}`;
       const firstStep = plan.steps[0];
       const operationId = `op:${executionId}:${firstStep.stepId}`;
@@ -951,11 +1159,13 @@ export async function advanceCognitiveCycle(
       );
 
       const isSuccess = op.status === "SUCCEEDED";
-      const durableResult = (attempt?.providerMetadata ?? null) as JSONObject | null;
+      const durableResult = (attempt?.providerMetadata ??
+        null) as JSONObject | null;
 
-      // Invariant: If operation was marked SUCCEEDED but durable result payload is missing/empty,
-      // fail closed / do NOT invent synthetic success content.
-      if (isSuccess && (!durableResult || Object.keys(durableResult).length === 0)) {
+      if (
+        isSuccess &&
+        (!durableResult || Object.keys(durableResult).length === 0)
+      ) {
         return {
           isBoundary: true,
           cycleResult: {
@@ -981,7 +1191,9 @@ export async function advanceCognitiveCycle(
             outcome: "CONFIRMED_FAILURE",
             operationKind: op.operationKind,
             errorSummary:
-              attempt?.errorSummary ?? op.uncertaintyReason ?? "Operation did not confirm success",
+              attempt?.errorSummary ??
+              op.uncertaintyReason ??
+              "Operation did not confirm success",
             finishedAt: attempt?.finishedAt ?? op.updatedAt,
           };
 
@@ -1022,6 +1234,12 @@ export async function advanceCognitiveCycle(
 
     case "VERIFY_RESULT": {
       const plan = await getRequiredPlan(db, session);
+      if (plan.steps.length !== 1) {
+        throw PersistenceError.invalidPersistedState(
+          `Action plan "${plan.planId}" has ${plan.steps.length} steps; single-step runtime only supported.`,
+        );
+      }
+
       const executionId = `exec:${session.sessionId}:${plan.planId}`;
       const firstStep = plan.steps[0];
       const observationId = `obs:${executionId}:${firstStep.stepId}`;
@@ -1060,7 +1278,7 @@ export async function advanceCognitiveCycle(
         verification.status,
       );
 
-      // Apply atomic reward + learning state projection in M5 transaction
+      // Apply canonical reward + learning state projection
       await applyVerificationReward(db, {
         commandIdempotencyKey: `reward:${verificationId}:${defaultReward.rewardRuleId}`,
         rewardEventId: `rew:${verificationId}`,
@@ -1093,7 +1311,7 @@ export async function advanceCognitiveCycle(
         );
       }
 
-      // Confirm durable learning projection exists without applying duplicate reward
+      // Confirm durable learning projection exists
       const learningState = await learningRepository.findLearningState(
         db,
         options.skillKey,
@@ -1114,14 +1332,70 @@ export async function advanceCognitiveCycle(
         return { isBoundary: false, nextSession: updated };
       }
 
-      // If failed or inconclusive -> clear working memory
-      const updated = await transitionSessionPhase(
-        db,
-        session,
-        "CLEAR_WORKING_MEMORY",
-        now,
-      );
-      return { isBoundary: false, nextSession: updated };
+      // For FAILED or INCONCLUSIVE verifications, orchestrate failure recovery
+      const authoritativeSafety =
+        await safetyRepository.findSafetyStateBySessionId(db, sessionId);
+      if (!authoritativeSafety) {
+        throw PersistenceError.notFound(
+          `Safety state for session "${sessionId}" not found.`,
+        );
+      }
+
+      const recoveryResult = await persistFailureRecovery(db, {
+        commandIdempotencyKey: `fail-rec:${session.sessionId}:${session.rowVersion}`,
+        sessionId: session.sessionId,
+        expectedSessionRowVersion: session.rowVersion,
+        expectedSafetyGeneration: authoritativeSafety.generation,
+        failure: "UNVERIFIED_RESULT",
+        reason: `Execution result was ${verification.status}: ${verification.reason}`,
+        evidenceIds: [`ev-obs:${executionId}:${plan.steps[0].stepId}`],
+        auditEventId: `audit:${session.sessionId}:${session.failureCount + 1}`,
+        safetyEventId: `ev-safety:${session.sessionId}:${authoritativeSafety.generation + 1}`,
+        safetyEventKey: `ev-key:safety:${session.sessionId}:${authoritativeSafety.generation + 1}`,
+        candidateId: session.currentCandidateId,
+        planId: plan.planId,
+        createdAt: now,
+      });
+
+      if (recoveryResult.decision.action === "RETRY_WITH_FRESH_CONTEXT") {
+        return {
+          isBoundary: false,
+          nextSession: recoveryResult.session,
+        };
+      } else if (recoveryResult.decision.action === "START_COOLDOWN") {
+        const cooldownInspection = inspectRecoveryState(
+          recoveryResult.session,
+          now,
+        );
+        return {
+          isBoundary: true,
+          cycleResult: {
+            status: "COOLDOWN",
+            sessionId,
+            cooldownUntil: recoveryResult.session.cooldownUntil ?? now,
+            remainingMs:
+              cooldownInspection.status === "COOLDOWN_ACTIVE"
+                ? cooldownInspection.remainingMs
+                : 240_000,
+          },
+          nextSession: recoveryResult.session,
+        };
+      } else {
+        return {
+          isBoundary: true,
+          cycleResult: {
+            status: "HUMAN_REVIEW_REQUIRED",
+            sessionId,
+            reason: `Failure recovery resulted in ${recoveryResult.decision.action}: ${recoveryResult.decision.reason}`,
+            details: {
+              failureCount: recoveryResult.session.failureCount,
+              retryCount: recoveryResult.session.retryCount,
+              verificationStatus: verification.status,
+            },
+          },
+          nextSession: recoveryResult.session,
+        };
+      }
     }
 
     case "SAVE_MEMORY": {
@@ -1140,7 +1414,12 @@ export async function advanceCognitiveCycle(
           executionId,
         );
 
-      if (ports.memoryProposalStrategy && exec && ver) {
+      if (
+        ports.memoryProposalStrategy &&
+        exec &&
+        ver &&
+        ver.status === "VERIFIED"
+      ) {
         const proposals =
           await ports.memoryProposalStrategy.proposeVerifiedMemory(
             exec,
@@ -1193,9 +1472,14 @@ export async function advanceCognitiveCycle(
             .catch(() => null)
         : null;
 
-      const memHead = await memoryRepository
-        .findMemoryHead(db, "FACT", "email.processed")
-        .catch(() => null);
+      const memoriesAdmittedCount = verification
+        ? await memoryRepository
+            .countAdmittedMemoriesByVerification(
+              db,
+              verification.verificationId,
+            )
+            .catch(() => 0)
+        : 0;
 
       const updated = await transitionSessionPhase(db, session, "IDLE", now, {
         currentCandidateId: null,
@@ -1204,15 +1488,16 @@ export async function advanceCognitiveCycle(
       });
 
       if (executionId && verification) {
+        const isVerified = verification.status === "VERIFIED";
         return {
           isBoundary: true,
           cycleResult: {
-            status: verification.status === "FAILED" ? "FAILED" : "COMPLETED",
+            status: isVerified ? "COMPLETED" : "FAILED",
             sessionId,
             executionId,
             verificationId: verification.verificationId,
             rewardEventId: `rew:${verification.verificationId}`,
-            memoriesAdmitted: memHead ? 1 : 0,
+            memoriesAdmitted: isVerified ? memoriesAdmittedCount : 0,
             reason: `Verification status was ${verification.status}.`,
           },
           nextSession: updated,

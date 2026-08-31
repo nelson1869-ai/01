@@ -30,7 +30,7 @@ export function createAssistantChatPostHandler(
     }
     try {
       const body = assistantChatRequestSchema.parse(rawBody);
-      return apiSuccess(await service.chat(body));
+      return apiSuccess(await service.chat(body, { signal: request.signal }));
     } catch (error) {
       return handleRouteError(error);
     }

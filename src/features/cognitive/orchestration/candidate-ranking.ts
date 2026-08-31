@@ -15,7 +15,7 @@ export interface CandidateRankingScore {
 
 export function calculateLearningAwareScore(
   candidate: PersistedCandidateAction,
-  learningState: PersistedLearningState,
+  learningState?: PersistedLearningState | null,
 ): CandidateRankingScore {
   const base = scoreCandidate({
     id: candidate.candidateId,
@@ -30,9 +30,10 @@ export function calculateLearningAwareScore(
   });
 
   // Evidence weight scales from 0 to 1 at 20 samples
-  const evidenceWeight = Math.min(learningState.sampleCount / 20, 1);
-  const learningDelta =
-    (learningState.confidence - 0.5) * 0.1 * evidenceWeight;
+  const sampleCount = learningState?.sampleCount ?? 0;
+  const learningConfidence = learningState?.confidence ?? 0.5;
+  const evidenceWeight = Math.min(sampleCount / 20, 1);
+  const learningDelta = (learningConfidence - 0.5) * 0.1 * evidenceWeight;
   const finalScore = Math.min(1, Math.max(0, base.value + learningDelta));
 
   let recommendation: ActionRecommendation;
@@ -57,7 +58,7 @@ export function calculateLearningAwareScore(
 
 export function rankCandidates(
   candidates: readonly PersistedCandidateAction[],
-  learningState: PersistedLearningState,
+  learningState?: PersistedLearningState | null,
 ): readonly CandidateRankingScore[] {
   const scored = candidates.map((c) =>
     calculateLearningAwareScore(c, learningState),

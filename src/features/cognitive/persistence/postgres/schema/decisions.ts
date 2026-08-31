@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   check,
+  index,
   integer,
   jsonb,
   numeric,
@@ -74,6 +75,7 @@ export const candidateActions = pgTable(
     scoreFormulaVersion: varchar("score_formula_version", {
       length: 256,
     }).notNull(),
+    evaluationGeneration: integer("evaluation_generation").notNull().default(1),
     createdAt: timestamp("created_at", {
       withTimezone: true,
       mode: "string",
@@ -83,6 +85,14 @@ export const candidateActions = pgTable(
     unique("candidate_actions_session_candidate_unique").on(
       table.sessionId,
       table.candidateId,
+    ),
+    index("candidate_actions_session_generation_idx").on(
+      table.sessionId,
+      table.evaluationGeneration,
+    ),
+    check(
+      "candidate_actions_evaluation_generation_positive",
+      sql`${table.evaluationGeneration} >= 1`,
     ),
     check(
       "candidate_actions_confidence_range",

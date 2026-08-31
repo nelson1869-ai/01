@@ -14,9 +14,7 @@ import {
   retrieveMemoryHead,
   retrieveMemoryHeadsBatch,
 } from "../../../orchestration/memory-retrieval-orchestrator";
-import {
-  applyVerificationReward,
-} from "../../../orchestration/reward-orchestrator";
+import { applyVerificationReward } from "../../../orchestration/reward-orchestrator";
 import { DeterministicResultVerifier } from "../../../orchestration/testing/deterministic-result-verifier";
 import { verifyExecutionResult } from "../../../orchestration/verification-orchestrator";
 import type { AuthorizationIssuanceCommand } from "../../contracts/authorization-issuance-command";
@@ -72,7 +70,10 @@ describe("live PostgreSQL learning system (reward ledger, learning state, verifi
 
   async function seedVerifiedExecution(
     suffix: string = "1",
-    outcome: "CONFIRMED_SUCCESS" | "CONFIRMED_FAILURE" | "INDETERMINATE" = "CONFIRMED_SUCCESS",
+    outcome:
+      | "CONFIRMED_SUCCESS"
+      | "CONFIRMED_FAILURE"
+      | "INDETERMINATE" = "CONFIRMED_SUCCESS",
   ) {
     const cueId = `cue-m5-${suffix}`;
     const sessionId = `session-m5-${suffix}`;
@@ -112,6 +113,7 @@ describe("live PostgreSQL learning system (reward ledger, learning state, verifi
       candidateId,
       sessionId,
       cueId,
+      evaluationGeneration: 1,
       goal: "Test learning and memory foundation",
       action: "fake.operation",
       confidence: 0.95,
@@ -1283,6 +1285,8 @@ describe("live PostgreSQL learning system (reward ledger, learning state, verifi
     const migrations = await context.db.execute(sql`
       SELECT count(*)::int as count FROM drizzle.__drizzle_migrations
     `);
-    expect((migrations.rows[0] as { count: number }).count).toBeGreaterThanOrEqual(3);
+    expect(
+      (migrations.rows[0] as { count: number }).count,
+    ).toBeGreaterThanOrEqual(3);
   });
 });

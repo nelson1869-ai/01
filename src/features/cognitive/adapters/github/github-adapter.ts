@@ -14,22 +14,22 @@ export interface GitHubAdapterOptions {
   readonly fetchFn?: typeof fetch;
 }
 
-export type GitHubOperationRequest =
-  | {
-      readonly repository: string;
-      readonly path?: string;
-      readonly ref?: string;
-      readonly state?: "open" | "closed" | "all";
-      readonly perPage?: number;
-      readonly issueNumber?: number;
-      readonly pullNumber?: number;
-    };
+export type GitHubOperationRequest = {
+  readonly repository: string;
+  readonly path?: string;
+  readonly ref?: string;
+  readonly state?: "open" | "closed" | "all";
+  readonly perPage?: number;
+  readonly issueNumber?: number;
+  readonly pullNumber?: number;
+};
 
 export type GitHubOperationResult = Readonly<Record<string, unknown>>;
 
-export class GitHubReadOnlyAdapter
-  implements OperationAdapter<GitHubOperationRequest, GitHubOperationResult>
-{
+export class GitHubReadOnlyAdapter implements OperationAdapter<
+  GitHubOperationRequest,
+  GitHubOperationResult
+> {
   readonly scope = "github-rest";
   readonly idempotencySupport = "NONE" as const;
   readonly supportsReconciliation = false;
@@ -68,7 +68,8 @@ export class GitHubReadOnlyAdapter
       return {
         outcome: "CONFIRMED_FAILURE",
         providerOperationId: null,
-        errorSummary: "Missing GitHub token (GITHUB_TOKEN environment variable not set).",
+        errorSummary:
+          "Missing GitHub token (GITHUB_TOKEN environment variable not set).",
         isDeterministic: true,
         finishedAt,
       };
@@ -137,7 +138,10 @@ export class GitHubReadOnlyAdapter
       const rawMessage = err instanceof Error ? err.message : String(err);
       const sanitized = sanitizeErrorMessage(rawMessage);
 
-      if (sanitized.toLowerCase().includes("abort") || sanitized.toLowerCase().includes("timeout")) {
+      if (
+        sanitized.toLowerCase().includes("abort") ||
+        sanitized.toLowerCase().includes("timeout")
+      ) {
         return {
           outcome: "CONFIRMED_FAILURE",
           providerOperationId: null,
@@ -233,17 +237,29 @@ export class GitHubReadOnlyAdapter
     req: GitHubOperationRequest,
     rawJson: unknown,
   ): GitHubOperationResult {
-    const data = (rawJson && typeof rawJson === "object" ? rawJson : {}) as Record<string, unknown>;
+    const data = (
+      rawJson && typeof rawJson === "object" ? rawJson : {}
+    ) as Record<string, unknown>;
 
     switch (operationKind) {
       case "github.repo.get":
         return {
           name: typeof data.name === "string" ? data.name : "01",
-          fullName: typeof data.full_name === "string" ? data.full_name : ALLOWED_GITHUB_REPO,
-          defaultBranch: typeof data.default_branch === "string" ? data.default_branch : "main",
-          description: typeof data.description === "string" ? data.description : null,
+          fullName:
+            typeof data.full_name === "string"
+              ? data.full_name
+              : ALLOWED_GITHUB_REPO,
+          defaultBranch:
+            typeof data.default_branch === "string"
+              ? data.default_branch
+              : "main",
+          description:
+            typeof data.description === "string" ? data.description : null,
           isPrivate: Boolean(data.private),
-          updatedAt: typeof data.updated_at === "string" ? data.updated_at : new Date().toISOString(),
+          updatedAt:
+            typeof data.updated_at === "string"
+              ? data.updated_at
+              : new Date().toISOString(),
         };
 
       case "github.contents.read": {
@@ -290,13 +306,16 @@ export class GitHubReadOnlyAdapter
       case "github.issues.list": {
         const items = Array.isArray(rawJson) ? rawJson : [];
         const boundedItems = items.slice(0, 50).map((rawItem: unknown) => {
-          const item = (rawItem && typeof rawItem === "object" ? rawItem : {}) as Record<string, unknown>;
+          const item = (
+            rawItem && typeof rawItem === "object" ? rawItem : {}
+          ) as Record<string, unknown>;
           return {
             number: typeof item.number === "number" ? item.number : undefined,
             title: String(item.title ?? "").slice(0, 200),
             state: typeof item.state === "string" ? item.state : undefined,
             url: typeof item.html_url === "string" ? item.html_url : undefined,
-            updatedAt: typeof item.updated_at === "string" ? item.updated_at : undefined,
+            updatedAt:
+              typeof item.updated_at === "string" ? item.updated_at : undefined,
           };
         });
         return {
@@ -314,19 +333,23 @@ export class GitHubReadOnlyAdapter
           state: typeof data.state === "string" ? data.state : undefined,
           body: String(data.body ?? "").slice(0, 4096),
           url: typeof data.html_url === "string" ? data.html_url : undefined,
-          updatedAt: typeof data.updated_at === "string" ? data.updated_at : undefined,
+          updatedAt:
+            typeof data.updated_at === "string" ? data.updated_at : undefined,
         };
 
       case "github.pull_requests.list": {
         const items = Array.isArray(rawJson) ? rawJson : [];
         const boundedItems = items.slice(0, 50).map((rawItem: unknown) => {
-          const item = (rawItem && typeof rawItem === "object" ? rawItem : {}) as Record<string, unknown>;
+          const item = (
+            rawItem && typeof rawItem === "object" ? rawItem : {}
+          ) as Record<string, unknown>;
           return {
             number: typeof item.number === "number" ? item.number : undefined,
             title: String(item.title ?? "").slice(0, 200),
             state: typeof item.state === "string" ? item.state : undefined,
             url: typeof item.html_url === "string" ? item.html_url : undefined,
-            updatedAt: typeof item.updated_at === "string" ? item.updated_at : undefined,
+            updatedAt:
+              typeof item.updated_at === "string" ? item.updated_at : undefined,
           };
         });
         return {
@@ -344,7 +367,8 @@ export class GitHubReadOnlyAdapter
           state: typeof data.state === "string" ? data.state : undefined,
           body: String(data.body ?? "").slice(0, 4096),
           url: typeof data.html_url === "string" ? data.html_url : undefined,
-          updatedAt: typeof data.updated_at === "string" ? data.updated_at : undefined,
+          updatedAt:
+            typeof data.updated_at === "string" ? data.updated_at : undefined,
         };
 
       default:

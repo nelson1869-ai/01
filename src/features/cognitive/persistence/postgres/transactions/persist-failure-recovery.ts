@@ -1,8 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 
-import {
-  applyFailureRecovery,
-} from "../../../domain/apply-failure-recovery";
+import { applyFailureRecovery } from "../../../domain/apply-failure-recovery";
 import { blockExecutionForSafety } from "../../../domain/block-execution-for-safety";
 import type { ExecutionRecord } from "../../../domain/execution";
 import {
@@ -30,10 +28,7 @@ import { sessionRepository } from "../repositories/session-repository";
 import { executionEvents, executions } from "../schema/execution";
 import { createCanonicalFingerprint } from "../utils/canonical-fingerprint";
 import { decodeExecutionRow } from "../utils/row-mappers";
-import {
-  type DatabaseClient,
-  runInTransaction,
-} from "./transaction-executor";
+import { type DatabaseClient, runInTransaction } from "./transaction-executor";
 
 export type FailureRecoveryTransactionResult = Readonly<{
   isReplay: boolean;
@@ -81,13 +76,8 @@ export async function persistFailureRecovery(
   }
 
   const command = parsed.data;
-  const sortedEvidenceIds = Array.from(
-    new Set(command.evidenceIds),
-  ).sort();
-  const requestHash = failureCommandFingerprint(
-    command,
-    sortedEvidenceIds,
-  );
+  const sortedEvidenceIds = Array.from(new Set(command.evidenceIds)).sort();
+  const requestHash = failureCommandFingerprint(command, sortedEvidenceIds);
 
   return await runInTransaction(db, async (tx) => {
     // 1. Claim command in idempotency ledger
@@ -114,17 +104,15 @@ export async function persistFailureRecovery(
         );
       }
 
-      const existingSafety =
-        await safetyRepository.findSafetyStateBySessionId(
-          tx,
-          command.sessionId,
-        );
+      const existingSafety = await safetyRepository.findSafetyStateBySessionId(
+        tx,
+        command.sessionId,
+      );
 
-      const existingSession =
-        await sessionRepository.findSessionById(
-          tx,
-          command.sessionId,
-        );
+      const existingSession = await sessionRepository.findSessionById(
+        tx,
+        command.sessionId,
+      );
 
       if (!existingSafety || !existingSession) {
         throw PersistenceError.invalidPersistedState(
@@ -138,10 +126,7 @@ export async function persistFailureRecovery(
           .select()
           .from(executions)
           .where(
-            eq(
-              executions.executionId,
-              command.activeExecution.executionId,
-            ),
+            eq(executions.executionId, command.activeExecution.executionId),
           )
           .limit(1);
 
@@ -192,11 +177,10 @@ export async function persistFailureRecovery(
       );
     }
 
-    const currentSafety =
-      await safetyRepository.findSafetyStateBySessionId(
-        tx,
-        command.sessionId,
-      );
+    const currentSafety = await safetyRepository.findSafetyStateBySessionId(
+      tx,
+      command.sessionId,
+    );
 
     if (!currentSafety) {
       throw PersistenceError.stateConflict(
@@ -297,24 +281,22 @@ export async function persistFailureRecovery(
       ? new Date(recoveredContext.cooldownUntilMs).toISOString()
       : null;
 
-    const updatedSession = await sessionRepository.transitionSession(
-      tx,
-      {
-        sessionId: command.sessionId,
-        expectedRowVersion: command.expectedSessionRowVersion,
-        nextSessionState: {
-          phase: recoveredContext.phase,
-          failureCount: recoveredContext.failureCount,
-          retryCount: recoveredContext.retryCount,
-          maxRetries: currentSession.maxRetries,
-          cooldownUntil: nextCooldownUntil,
-          currentCandidateId: null,
-          currentPlanId: null,
-          currentExecutionId: null,
-          updatedAt: command.createdAt,
-        },
+    const updatedSession = await sessionRepository.transitionSession(tx, {
+      sessionId: command.sessionId,
+      expectedRowVersion: command.expectedSessionRowVersion,
+      nextSessionState: {
+        phase: recoveredContext.phase,
+        failureCount: recoveredContext.failureCount,
+        retryCount: recoveredContext.retryCount,
+        maxRetries: currentSession.maxRetries,
+        evaluationGeneration: currentSession.evaluationGeneration + 1,
+        cooldownUntil: nextCooldownUntil,
+        currentCandidateId: null,
+        currentPlanId: null,
+        currentExecutionId: null,
+        updatedAt: command.createdAt,
       },
-    );
+    });
 
     // 6. Append failure audit event + evidence associations
     const auditRecord: PersistedFailureAudit = {
@@ -337,8 +319,10 @@ export async function persistFailureRecovery(
       createdAt: command.createdAt,
     };
 
-    const auditAppendResult =
-      await failureAuditRepository.appendFailureAudit(tx, auditRecord);
+    const auditAppendResult = await failureAuditRepository.appendFailureAudit(
+      tx,
+      auditRecord,
+    );
 
     // 7. Block active execution if provided, using blockExecutionForSafety domain helper
     let blockedExecution: PersistedExecution | null = null;
@@ -374,10 +358,7 @@ export async function persistFailureRecovery(
           and(
             eq(executions.executionId, execTarget.executionId),
             eq(executions.sessionId, command.sessionId),
-            eq(
-              executions.rowVersion,
-              execTarget.expectedExecutionRowVersion,
-            ),
+            eq(executions.rowVersion, execTarget.expectedExecutionRowVersion),
             inArray(executions.status, ["PENDING", "RUNNING"]),
           ),
         )
@@ -396,8 +377,7 @@ export async function persistFailureRecovery(
       await tx.insert(executionEvents).values({
         executionEventId: execTarget.executionEventId,
         executionId: execTarget.executionId,
-        transitionSequence:
-          execTarget.expectedExecutionRowVersion + 1,
+        transitionSequence: execTarget.expectedExecutionRowVersion + 1,
         fromStatus: execTarget.expectedStatus,
         toStatus: blockedDomainExecution.status,
         stepId: null,

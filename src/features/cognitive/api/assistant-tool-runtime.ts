@@ -11,7 +11,9 @@ import { createCanonicalFingerprint } from "../persistence/postgres/utils/canoni
 import type { PersistedCueIngress } from "../persistence/contracts/cue-ingress";
 import type { DatabaseClient } from "../persistence/postgres/transactions/transaction-executor";
 import { ingestCue } from "../persistence/postgres/transactions/ingest-cue";
+import { executionRepository } from "../persistence/postgres/repositories/execution-repository";
 import { observationRepository } from "../persistence/postgres/repositories/observation-repository";
+import { sessionRepository } from "../persistence/postgres/repositories/session-repository";
 import { verificationRepository } from "../persistence/postgres/repositories/verification-repository";
 import type { AssistantIntent } from "./assistant-ai";
 import {
@@ -243,6 +245,42 @@ export class DatabaseAssistantToolRunner implements AssistantToolRunnerPort {
       cycle.status === "BLOCKED" ||
       cycle.status === "NO_ACTION"
     ) {
+      const sessionRecord = await sessionRepository.findSessionById(
+        this.db,
+        sessionId,
+      );
+      const latestExecution =
+        await executionRepository.findLatestExecutionBySessionId(
+          this.db,
+          sessionId,
+        );
+      const possibleExecId =
+        ("executionId" in cycle
+          ? (cycle.executionId as string | undefined)
+          : undefined) ??
+        sessionRecord?.currentExecutionId ??
+        latestExecution?.executionId ??
+        null;
+
+      if (possibleExecId) {
+        const verification =
+          await verificationRepository.findLatestVerificationByExecutionId(
+            this.db,
+            possibleExecId,
+          );
+        if (verification && verification.status !== "VERIFIED") {
+          return {
+            status: verification.status,
+            sessionId,
+            cueId,
+            executionId: possibleExecId,
+            verificationId: verification.verificationId,
+            verifiedFacts: null,
+            reason: verification.reason,
+          };
+        }
+      }
+
       return {
         status: "DENIED",
         sessionId,

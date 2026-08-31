@@ -29,6 +29,13 @@
       "when": 1788180000001,
       "tag": "0003_conversational_assistant",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788173266970,
+      "tag": "0004_cognitive_engine_integrity",
+      "breakpoints": true
     }
   ]
 }

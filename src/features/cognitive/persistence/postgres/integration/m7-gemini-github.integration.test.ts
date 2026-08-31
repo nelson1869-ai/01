@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { ALLOWED_GITHUB_REPO, GitHubReadOnlyAdapter } from "../../../adapters/github/github-adapter";
+import {
+  ALLOWED_GITHUB_REPO,
+  GitHubReadOnlyAdapter,
+} from "../../../adapters/github/github-adapter";
 import { AiProviderError } from "../../../ai/ai-errors";
 import { FakeStructuredAiProvider } from "../../../ai/testing/fake-ai-provider";
 import {
@@ -7,9 +10,7 @@ import {
   type CognitiveCyclePorts,
   runCognitiveCycleUntilBoundary,
 } from "../../../orchestration/cognitive-loop-driver";
-import {
-  GeminiCandidateGeneratorPort,
-} from "../../../orchestration/gemini-candidate-generator";
+import { GeminiCandidateGeneratorPort } from "../../../orchestration/gemini-candidate-generator";
 import {
   GitHubGroundingEvaluator,
   GitHubPolicyEvaluator,
@@ -30,6 +31,7 @@ import type { PersistedCueIngress } from "../../contracts/cue-ingress";
 import type { PostgresDatabaseContext } from "../client";
 import { candidateRepository } from "../repositories/candidate-repository";
 import { executionOperationRepository } from "../repositories/execution-operation-repository";
+import { executionRepository } from "../repositories/execution-repository";
 import { learningRepository } from "../repositories/learning-repository";
 import { observationRepository } from "../repositories/observation-repository";
 import { planRepository } from "../repositories/plan-repository";
@@ -49,7 +51,10 @@ class DeterministicPerception implements PerceptionPort {
   async perceive(cue: PersistedCueIngress): Promise<PerceptionResult> {
     return {
       summary: `Perceived task: ${cue.type}`,
-      structuredFacts: { targetRepo: ALLOWED_GITHUB_REPO, requestedFile: "README.md" },
+      structuredFacts: {
+        targetRepo: ALLOWED_GITHUB_REPO,
+        requestedFile: "README.md",
+      },
       perceivedAt: T0,
     };
   }
@@ -93,10 +98,7 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
     }
   });
 
-  function createMockFetch(responseInit: {
-    status?: number;
-    body?: unknown;
-  }) {
+  function createMockFetch(responseInit: { status?: number; body?: unknown }) {
     return async (url: string | URL | Request, init?: RequestInit) => {
       if (init?.method && init.method !== "GET") {
         throw new Error(`Non-GET method detected: ${init.method}`);
@@ -183,41 +185,67 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
     expect(result.status).toBe("COMPLETED");
 
     // 2. Candidate persisted once
-    const candidates = await candidateRepository.findCandidatesByCueId(context.db, cueId);
+    const candidates = await candidateRepository.findCandidatesByCueId(
+      context.db,
+      cueId,
+    );
     expect(candidates).toHaveLength(1);
     expect(candidates[0].action).toBe("github.contents.read");
 
     // 3. Execution, operation, observation, verification, reward persisted
-    const plan = await planRepository.findPlanByCandidateId(context.db, candidates[0].candidateId);
+    const plan = await planRepository.findPlanByCandidateId(
+      context.db,
+      candidates[0].candidateId,
+    );
     expect(plan).not.toBeNull();
     const executionId = `exec:${sessionId}:${plan!.planId}`;
 
-    const op = await executionOperationRepository.findOperationById(context.db, `op:${executionId}:step-read-1`);
+    const op = await executionOperationRepository.findOperationById(
+      context.db,
+      `op:${executionId}:step-read-1`,
+    );
     expect(op).not.toBeNull();
     expect(op?.providerScope).toBe("github-rest");
     expect(op?.status).toBe("SUCCEEDED");
 
-    const obs = await observationRepository.findManyObservationsByExecutionId(context.db, executionId);
+    const obs = await observationRepository.findManyObservationsByExecutionId(
+      context.db,
+      executionId,
+    );
     expect(obs).toHaveLength(1);
     expect(obs[0].source).toBe("provider-dispatch");
-    expect(JSON.stringify(obs[0])).not.toContain("ghp_mock_secret_token_1234567890");
+    expect(JSON.stringify(obs[0])).not.toContain(
+      "ghp_mock_secret_token_1234567890",
+    );
 
-    const ver = await verificationRepository.findVerificationById(context.db, `ver:${executionId}`);
+    const ver = await verificationRepository.findVerificationById(
+      context.db,
+      `ver:${executionId}`,
+    );
     expect(ver).not.toBeNull();
     expect(ver?.status).toBe("VERIFIED");
 
-    const rew = await rewardRepository.findRewardById(context.db, `rew:ver:${executionId}`);
+    const rew = await rewardRepository.findRewardById(
+      context.db,
+      `rew:ver:${executionId}`,
+    );
     expect(rew).not.toBeNull();
     expect(rew?.signal).toBe("SUCCESS");
     expect(rew?.value).toBe(5);
 
     // 4. Learning state updated
-    const learning = await learningRepository.findLearningState(context.db, "github.contents.read");
+    const learning = await learningRepository.findLearningState(
+      context.db,
+      "github.contents.read",
+    );
     expect(learning).not.toBeNull();
     expect(learning?.sampleCount).toBe(1);
 
     // 5. Final session phase is IDLE
-    const finalSession = await sessionRepository.findSessionById(context.db, sessionId);
+    const finalSession = await sessionRepository.findSessionById(
+      context.db,
+      sessionId,
+    );
     expect(finalSession?.phase).toBe("IDLE");
   });
 
@@ -263,18 +291,36 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
       policyEvaluator: new GitHubPolicyEvaluator(),
       planBuilder: new DeterministicPlanBuilder(),
       verifier: new GitHubResultVerifier(),
-      adapter: new GitHubReadOnlyAdapter({ token: "test", fetchFn: createMockFetch({}) }),
+      adapter: new GitHubReadOnlyAdapter({
+        token: "test",
+        fetchFn: createMockFetch({}),
+      }),
       requestBuilder: new DefaultOperationRequestBuilder(),
     };
 
     // Transition from CUE -> PERCEIVE -> BUILD_CONTEXT -> RETRIEVE_MEMORY -> GENERATE_CANDIDATES
-    let step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "github.repo.get", now: T0 }); // -> PERCEIVE
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "github.repo.get", now: T0 }); // -> BUILD_CONTEXT
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "github.repo.get", now: T0 }); // -> RETRIEVE_MEMORY
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "github.repo.get", now: T0 }); // -> GENERATE_CANDIDATES
+    let step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "github.repo.get",
+      now: T0,
+    }); // -> PERCEIVE
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "github.repo.get",
+      now: T0,
+    }); // -> BUILD_CONTEXT
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "github.repo.get",
+      now: T0,
+    }); // -> RETRIEVE_MEMORY
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "github.repo.get",
+      now: T0,
+    }); // -> GENERATE_CANDIDATES
 
     // 1st Generation (calls Gemini)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "github.repo.get", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "github.repo.get",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("SCORE");
     expect(fakeAi.recordedRequests).toHaveLength(1);
 
@@ -293,7 +339,10 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
     });
 
     // 2nd Advance from GENERATE_CANDIDATES (must NOT call Gemini again)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "github.repo.get", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "github.repo.get",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("SCORE");
     expect(fakeAi.recordedRequests).toHaveLength(1); // Still 1!
   });
@@ -363,7 +412,10 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
     expect(result.status).toBe("HUMAN_REVIEW_REQUIRED");
     expect(adapterCalled).toBe(false);
 
-    const safety = await safetyRepository.findSafetyStateBySessionId(context.db, sessionId);
+    const safety = await safetyRepository.findSafetyStateBySessionId(
+      context.db,
+      sessionId,
+    );
     expect(safety?.status).toBe("UNAUTHORIZED");
   });
 
@@ -409,7 +461,10 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
 
       const adapter = new GitHubReadOnlyAdapter({
         token: "ghp_secret_token_scenario",
-        fetchFn: createMockFetch({ status: statusCode, body: { message: "API Error" } }),
+        fetchFn: createMockFetch({
+          status: statusCode,
+          body: { message: "API Error" },
+        }),
       });
 
       const ports: CognitiveCyclePorts = {
@@ -430,11 +485,17 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
         { skillKey: "github.repo.get", now: T0 },
       );
 
-      expect(result.status).toBe("FAILED");
+      expect(result.status).not.toBe("COMPLETED");
+      const latestExec = await executionRepository.findLatestExecutionBySessionId(
+        context.db,
+        testSessionId,
+      );
+      expect(latestExec).not.toBeNull();
       const obs = await observationRepository.findManyObservationsByExecutionId(
         context.db,
-        `exec:${testSessionId}:plan:cand:cue-${testSessionId}:0`,
+        latestExec!.executionId,
       );
+      expect(obs.length).toBeGreaterThan(0);
       // Verify token never appears anywhere in database records
       expect(JSON.stringify(obs)).not.toContain("ghp_secret_token_scenario");
     }
@@ -624,7 +685,10 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
 
     expect(result.status).toBe("COMPLETED");
 
-    const session = await sessionRepository.findSessionById(context.db, sessionId);
+    const session = await sessionRepository.findSessionById(
+      context.db,
+      sessionId,
+    );
     expect(session?.phase).toBe("IDLE");
 
     // Acceptance of second cue after completion
@@ -698,7 +762,10 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
     expect(result.status).toBe("NO_ACTION");
     expect(githubCalled).toBe(false);
 
-    const finalSession = await sessionRepository.findSessionById(context.db, sessionId);
+    const finalSession = await sessionRepository.findSessionById(
+      context.db,
+      sessionId,
+    );
     expect(finalSession?.phase).toBe("IDLE");
   });
 
@@ -767,7 +834,10 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
     };
 
     // Step cycle until session reaches OBSERVE (simulating ACT finishing and process crashing/exiting)
-    let state = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "github.contents.read", now: T0 });
+    let state = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "github.contents.read",
+      now: T0,
+    });
     while (state.nextSession.phase !== "OBSERVE") {
       state = await advanceCognitiveCycle(
         context.db,
@@ -813,11 +883,16 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
       state.nextSession.currentCandidateId!,
     );
     const executionId = `exec:${sessionId}:${plan!.planId}`;
-    const obs = await observationRepository.findManyObservationsByExecutionId(context.db, executionId);
+    const obs = await observationRepository.findManyObservationsByExecutionId(
+      context.db,
+      executionId,
+    );
 
     expect(obs).toHaveLength(1);
     const data = obs[0].data as Record<string, unknown>;
-    const res = (data.result && typeof data.result === "object" ? data.result : {}) as Record<string, unknown>;
+    const res = (
+      data.result && typeof data.result === "object" ? data.result : {}
+    ) as Record<string, unknown>;
     expect(data.outcome).toBe("CONFIRMED_SUCCESS");
     expect(res.repository).toBe(ALLOWED_GITHUB_REPO);
     expect(res.path).toBe("README.md");
@@ -867,12 +942,18 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
       policyEvaluator: new GitHubPolicyEvaluator(),
       planBuilder: new DeterministicPlanBuilder(),
       verifier: new GitHubResultVerifier(),
-      adapter: new GitHubReadOnlyAdapter({ token: "test", fetchFn: createMockFetch({ status: 200, body: {} }) }),
+      adapter: new GitHubReadOnlyAdapter({
+        token: "test",
+        fetchFn: createMockFetch({ status: 200, body: {} }),
+      }),
       requestBuilder: new DefaultOperationRequestBuilder(),
     };
 
     // Step cycle until OBSERVE
-    let state = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "github.contents.read", now: T0 });
+    let state = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "github.contents.read",
+      now: T0,
+    });
     while (state.nextSession.phase !== "OBSERVE") {
       state = await advanceCognitiveCycle(
         context.db,
@@ -897,12 +978,10 @@ describe("Milestone 7 — Real AI + GitHub Read Tool Integration Tests (Live Pos
     );
 
     // Attempt to run OBSERVE with corrupted/missing durable provider payload
-    const result = await advanceCognitiveCycle(
-      context.db,
-      sessionId,
-      ports,
-      { skillKey: "github.contents.read", now: T0 },
-    );
+    const result = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "github.contents.read",
+      now: T0,
+    });
 
     expect(result.isBoundary).toBe(true);
     expect(result.cycleResult?.status).toBe("FAILED");

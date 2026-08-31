@@ -70,6 +70,7 @@ export async function ingestCue(
       failureCount: 0,
       retryCount: 0,
       maxRetries: input.maxRetries ?? 2,
+      evaluationGeneration: 1,
       cooldownUntil: null,
       rowVersion: 0,
       createdAt: input.cue.receivedAt,

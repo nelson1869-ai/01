@@ -16,7 +16,11 @@ export interface ApiDataEnvelope<T> {
   readonly data: T;
 }
 
-export function apiSuccess<T>(data: T, status = 200, headers?: HeadersInit): Response {
+export function apiSuccess<T>(
+  data: T,
+  status = 200,
+  headers?: HeadersInit,
+): Response {
   return Response.json({ data } satisfies ApiDataEnvelope<T>, {
     status,
     headers: {
@@ -73,7 +77,12 @@ export function handleRouteError(error: unknown): Response {
       case "NOT_FOUND":
         return apiError("NOT_FOUND", error.message, 404);
       case "IDEMPOTENCY_CONFLICT":
-        return apiError("IDEMPOTENCY_CONFLICT", error.message, 409, error.details);
+        return apiError(
+          "IDEMPOTENCY_CONFLICT",
+          error.message,
+          409,
+          error.details,
+        );
       case "STATE_CONFLICT":
         return apiError("STATE_CONFLICT", error.message, 409, error.details);
       case "STALE_WRITE":
@@ -88,7 +97,10 @@ export function handleRouteError(error: unknown): Response {
     }
   }
 
-  const rawMessage =
-    error instanceof Error ? error.message : "An unexpected server error occurred.";
-  return apiError("INTERNAL_ERROR", rawMessage, 500);
+  const message =
+    error instanceof Error && error.message.trim().length > 0
+      ? error.message
+      : "An internal server error occurred.";
+
+  return apiError("INTERNAL_ERROR", message, 500);
 }

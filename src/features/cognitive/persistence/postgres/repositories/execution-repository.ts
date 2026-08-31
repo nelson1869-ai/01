@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import {
   isLegalExecutionTransition,
@@ -51,6 +51,24 @@ export class ExecutionRepository {
       .select()
       .from(executions)
       .where(eq(executions.executionId, executionId))
+      .limit(1);
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return decodeExecutionRow(rows[0]);
+  }
+
+  async findLatestExecutionBySessionId(
+    executor: DatabaseExecutor,
+    sessionId: string,
+  ): Promise<PersistedExecution | null> {
+    const rows = await executor
+      .select()
+      .from(executions)
+      .where(eq(executions.sessionId, sessionId))
+      .orderBy(desc(executions.createdAt))
       .limit(1);
 
     if (rows.length === 0) {

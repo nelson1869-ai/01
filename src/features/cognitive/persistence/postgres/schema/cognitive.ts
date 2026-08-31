@@ -29,6 +29,7 @@ export const cognitiveSessions = pgTable(
     currentCandidateId: varchar("current_candidate_id", { length: 256 }),
     currentPlanId: varchar("current_plan_id", { length: 256 }),
     currentExecutionId: varchar("current_execution_id", { length: 256 }),
+    evaluationGeneration: integer("evaluation_generation").notNull().default(1),
     rowVersion: integer("row_version").notNull().default(0),
     createdAt: timestamp("created_at", {
       withTimezone: true,
@@ -42,6 +43,10 @@ export const cognitiveSessions = pgTable(
   (table) => [
     unique("cognitive_sessions_cue_id_unique").on(table.cueId),
     index("cognitive_sessions_cue_id_idx").on(table.cueId),
+    check(
+      "cognitive_sessions_evaluation_generation_positive",
+      sql`${table.evaluationGeneration} >= 1`,
+    ),
     check(
       "cognitive_sessions_failure_count_non_negative",
       sql`${table.failureCount} >= 0`,

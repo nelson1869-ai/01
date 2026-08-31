@@ -12,6 +12,7 @@ const validSession = {
   failureCount: 1,
   retryCount: 1,
   maxRetries: 2,
+  evaluationGeneration: 1,
   cooldownUntil: null,
   rowVersion: 4,
   createdAt: "2026-08-30T00:00:00.000Z",

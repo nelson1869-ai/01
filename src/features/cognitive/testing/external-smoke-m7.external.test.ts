@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { ALLOWED_GITHUB_REPO, GitHubReadOnlyAdapter } from "../adapters/github/github-adapter";
-import { GeminiStructuredAiProvider } from "../ai/gemini-provider";
 import {
-  GeminiCandidateGeneratorPort,
-} from "../orchestration/gemini-candidate-generator";
+  ALLOWED_GITHUB_REPO,
+  GitHubReadOnlyAdapter,
+} from "../adapters/github/github-adapter";
+import { GeminiStructuredAiProvider } from "../ai/gemini-provider";
+import { GeminiCandidateGeneratorPort } from "../orchestration/gemini-candidate-generator";
 
 describe("Opt-in Real External Smoke Tests for Milestone 7 (Gemini + GitHub)", () => {
   const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -31,7 +32,9 @@ describe("Opt-in Real External Smoke Tests for Milestone 7 (Gemini + GitHub)", (
     });
 
     const durationMs = Date.now() - startTime;
-    console.log(`[Gemini Smoke] Model: ${result.model}, Latency: ${durationMs}ms, Value: ${JSON.stringify(result.value)}`);
+    console.log(
+      `[Gemini Smoke] Model: ${result.model}, Latency: ${durationMs}ms, Value: ${JSON.stringify(result.value)}`,
+    );
 
     expect(result.provider).toBe("gemini");
     expect(result.model).toBe("gemini-3.7-flash");
@@ -61,7 +64,9 @@ describe("Opt-in Real External Smoke Tests for Milestone 7 (Gemini + GitHub)", (
     });
 
     const durationMs = Date.now() - startTime;
-    console.log(`[GitHub Smoke] Repo: ${ALLOWED_GITHUB_REPO}, Outcome: ${repoResult.outcome}, Latency: ${durationMs}ms`);
+    console.log(
+      `[GitHub Smoke] Repo: ${ALLOWED_GITHUB_REPO}, Outcome: ${repoResult.outcome}, Latency: ${durationMs}ms`,
+    );
 
     expect(repoResult.outcome).toBe("CONFIRMED_SUCCESS");
     if (repoResult.outcome === "CONFIRMED_SUCCESS") {
@@ -115,6 +120,7 @@ describe("Opt-in Real External Smoke Tests for Milestone 7 (Gemini + GitHub)", (
         failureCount: 0,
         retryCount: 0,
         maxRetries: 3,
+        evaluationGeneration: 1,
         cooldownUntil: null,
         currentCandidateId: null,
         currentPlanId: null,
@@ -125,7 +131,10 @@ describe("Opt-in Real External Smoke Tests for Milestone 7 (Gemini + GitHub)", (
       },
       perception: {
         summary: "User requested checking open issues.",
-        structuredFacts: { task: "github.issues.list", repository: ALLOWED_GITHUB_REPO },
+        structuredFacts: {
+          task: "github.issues.list",
+          repository: ALLOWED_GITHUB_REPO,
+        },
         perceivedAt: new Date().toISOString(),
       },
       verifiedMemories: [],
@@ -141,12 +150,21 @@ describe("Opt-in Real External Smoke Tests for Milestone 7 (Gemini + GitHub)", (
     };
 
     const candidates = await generator.generateCandidates(dummyContext);
-    console.log(`[Gemini Proposal Smoke] Generated ${candidates.length} candidate(s): ${candidates.map((c) => c.action).join(", ")}`);
+    console.log(
+      `[Gemini Proposal Smoke] Generated ${candidates.length} candidate(s): ${candidates.map((c) => c.action).join(", ")}`,
+    );
 
     expect(candidates.length).toBeGreaterThanOrEqual(1);
     expect(candidates.length).toBeLessThanOrEqual(5);
     for (const c of candidates) {
-      expect(["github.repo.get", "github.contents.read", "github.issues.list", "github.issue.get", "github.pull_requests.list", "github.pull_request.get"]).toContain(c.action);
+      expect([
+        "github.repo.get",
+        "github.contents.read",
+        "github.issues.list",
+        "github.issue.get",
+        "github.pull_requests.list",
+        "github.pull_request.get",
+      ]).toContain(c.action);
     }
   });
 });

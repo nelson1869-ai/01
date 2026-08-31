@@ -303,6 +303,18 @@ export class MemoryRepository {
       };
     });
   }
+
+  async countAdmittedMemoriesByVerification(
+    executor: DatabaseExecutor,
+    verificationId: string,
+  ): Promise<number> {
+    const rows = await executor
+      .select()
+      .from(verifiedMemory)
+      .where(eq(verifiedMemory.verificationId, verificationId));
+
+    return rows.length;
+  }
 }
 
 export const memoryRepository = new MemoryRepository();

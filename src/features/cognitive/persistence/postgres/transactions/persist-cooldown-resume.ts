@@ -207,6 +207,7 @@ export async function persistCooldownResume(
         failureCount: resumedContext.failureCount,
         retryCount: resumedContext.retryCount,
         maxRetries: currentSession.maxRetries,
+        evaluationGeneration: currentSession.evaluationGeneration + 1,
         cooldownUntil: null,
         currentCandidateId: null,
         currentPlanId: null,

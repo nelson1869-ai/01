@@ -17,6 +17,7 @@ describe("GitHubGroundingEvaluator and GitHubPolicyEvaluator", () => {
     candidateId: "cand-1",
     sessionId: "sess-1",
     cueId: "cue-1",
+    evaluationGeneration: 1,
     goal: "Read repository metadata",
     action: "github.repo.get",
     confidence: 0.95,
@@ -31,7 +32,10 @@ describe("GitHubGroundingEvaluator and GitHubPolicyEvaluator", () => {
   };
 
   it("grounds supported read-only actions as VERIFIED", async () => {
-    const evalResult = await grounding.evaluateGrounding(validCandidate, dummyContext);
+    const evalResult = await grounding.evaluateGrounding(
+      validCandidate,
+      dummyContext,
+    );
     expect(evalResult.status).toBe("VERIFIED");
     expect(evalResult.confidence).toBe(1.0);
   });
@@ -43,7 +47,10 @@ describe("GitHubGroundingEvaluator and GitHubPolicyEvaluator", () => {
       action: "github.contents.write",
     };
 
-    const evalResult = await grounding.evaluateGrounding(writeCandidate, dummyContext);
+    const evalResult = await grounding.evaluateGrounding(
+      writeCandidate,
+      dummyContext,
+    );
     expect(evalResult.status).toBe("CONFLICTING_EVIDENCE");
     expect(evalResult.confidence).toBe(0.0);
   });
@@ -61,7 +68,11 @@ describe("GitHubGroundingEvaluator and GitHubPolicyEvaluator", () => {
       evaluatedAt: "2026-08-31T05:00:00.000Z",
     };
 
-    const policyResult = await policy.evaluatePolicy(validCandidate, groundingResult, dummyContext);
+    const policyResult = await policy.evaluatePolicy(
+      validCandidate,
+      groundingResult,
+      dummyContext,
+    );
     expect(policyResult.outcome).toBe("ALLOW");
     expect(policyResult.policyIds).toContain("github-readonly-v1");
   });
@@ -79,7 +90,11 @@ describe("GitHubGroundingEvaluator and GitHubPolicyEvaluator", () => {
       evaluatedAt: "2026-08-31T05:00:00.000Z",
     };
 
-    const policyResult = await policy.evaluatePolicy(validCandidate, unverifiedGrounding, dummyContext);
+    const policyResult = await policy.evaluatePolicy(
+      validCandidate,
+      unverifiedGrounding,
+      dummyContext,
+    );
     expect(policyResult.outcome).toBe("DENY");
   });
 
@@ -102,7 +117,11 @@ describe("GitHubGroundingEvaluator and GitHubPolicyEvaluator", () => {
       evaluatedAt: "2026-08-31T05:00:00.000Z",
     };
 
-    const policyResult = await policy.evaluatePolicy(writeCandidate, verifiedGrounding, dummyContext);
+    const policyResult = await policy.evaluatePolicy(
+      writeCandidate,
+      verifiedGrounding,
+      dummyContext,
+    );
     expect(policyResult.outcome).toBe("DENY");
   });
 });

@@ -3,9 +3,16 @@ import type { PersistedCandidateAction } from "../persistence/contracts/persiste
 import type { PersistedActionPlan } from "../persistence/contracts/persisted-action-plan";
 import type { PlanStepProposal } from "./cognitive-ports";
 import type { AssembledCognitiveContext } from "./context-assembler";
-import { ALLOWED_GITHUB_REPO, type GitHubOperationRequest } from "../adapters/github/github-adapter";
+import {
+  ALLOWED_GITHUB_REPO,
+  type GitHubOperationRequest,
+} from "../adapters/github/github-adapter";
 
-export interface BuiltOperationRequest<TRequest extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>> {
+export interface BuiltOperationRequest<
+  TRequest extends Readonly<Record<string, unknown>> = Readonly<
+    Record<string, unknown>
+  >,
+> {
   readonly operationKind: string;
   readonly providerScope: string;
   readonly request: TRequest;

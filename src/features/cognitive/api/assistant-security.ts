@@ -38,17 +38,10 @@ const MUTATION_REQUEST_PATTERNS: readonly RegExp[] = [
   /\b(deploy|publish|release)\s+(this\s+|my\s+|the\s+)?(repo|repository|branch|codebase)\b/i,
 ];
 
+import { sanitizeSecretValues } from "../security/secret-safety";
+
 export function redactAssistantMessage(message: string): string {
-  return sanitizeErrorMessage(message)
-    .replace(
-      /\b(?:GEMINI_API_KEY|GITHUB_TOKEN|TEST_DATABASE_URL)\s*[=:]\s*\S+/gi,
-      "[REDACTED_SECRET]",
-    )
-    .replace(/ghp_[a-zA-Z0-9]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
-    .replace(/github_pat_[a-zA-Z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
-    .replace(/AIzaSy[a-zA-Z0-9_-]{33}/g, "[REDACTED_GEMINI_KEY]")
-    .replace(/bearer\s+[a-zA-Z0-9._~+/-]+=*/gi, "Bearer [REDACTED_AUTH_HEADER]")
-    .slice(0, 8000);
+  return sanitizeSecretValues(sanitizeErrorMessage(message)).slice(0, 8000);
 }
 
 export function deterministicDenialReason(message: string): string | null {

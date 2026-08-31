@@ -67,6 +67,10 @@ import {
   type PersistedVerifiedMemory,
   persistedVerifiedMemorySchema,
 } from "../../contracts/verified-memory";
+import {
+  type AuthoritativePerceptionSnapshot,
+  authoritativePerceptionSnapshotSchema,
+} from "../../contracts/authoritative-perception-snapshot";
 import { PersistenceError } from "../errors/persistence-errors";
 
 function normalizeDateString(value: unknown): unknown {
@@ -135,6 +139,9 @@ export function decodeCognitiveSessionRow(
     failureCount: Number(raw.failureCount ?? raw.failure_count),
     retryCount: Number(raw.retryCount ?? raw.retry_count),
     maxRetries: Number(raw.maxRetries ?? raw.max_retries),
+    evaluationGeneration: Number(
+      raw.evaluationGeneration ?? raw.evaluation_generation ?? 1,
+    ),
     cooldownUntil: normalizeDateString(
       raw.cooldownUntil ?? raw.cooldown_until ?? null,
     ),
@@ -344,8 +351,7 @@ export function decodeExecutionOperationAttemptRow(
     startedAt: normalizeDateString(raw.startedAt ?? raw.started_at),
     finishedAt: normalizeDateString(raw.finishedAt ?? raw.finished_at ?? null),
     errorSummary: raw.errorSummary ?? raw.error_summary ?? null,
-    providerMetadata:
-      raw.providerMetadata ?? raw.provider_metadata ?? null,
+    providerMetadata: raw.providerMetadata ?? raw.provider_metadata ?? null,
   };
 
   const parsed = persistedExecutionOperationAttemptSchema.safeParse(candidate);
@@ -414,6 +420,9 @@ export function decodeCandidateActionRow(
     scoreValue: Number(raw.scoreValue ?? raw.score_value),
     recommendation: raw.recommendation,
     scoreFormulaVersion: raw.scoreFormulaVersion ?? raw.score_formula_version,
+    evaluationGeneration: Number(
+      raw.evaluationGeneration ?? raw.evaluation_generation ?? 1,
+    ),
     evidenceIds: raw.evidenceIds ?? evidenceIds,
     createdAt: normalizeDateString(raw.createdAt ?? raw.created_at),
   };
@@ -714,8 +723,7 @@ export function decodeVerifiedMemoryRow(
       raw.admissionRuleVersion ?? raw.admission_rule_version,
     supersedesMemoryId:
       raw.supersedesMemoryId ?? raw.supersedes_memory_id ?? null,
-    verificationId:
-      raw.verificationId ?? raw.verification_id ?? null,
+    verificationId: raw.verificationId ?? raw.verification_id ?? null,
     verifiedAt: normalizeDateString(raw.verifiedAt ?? raw.verified_at),
     createdAt: normalizeDateString(raw.createdAt ?? raw.created_at),
   };
@@ -786,4 +794,45 @@ export function mapPersistedCueToDomainCue(
     occurredAt: persisted.occurredAt,
     payload: persisted.payload,
   };
+}
+
+export function decodePerceptionSnapshotRow(
+  row: unknown,
+): AuthoritativePerceptionSnapshot {
+  if (typeof row !== "object" || row === null) {
+    throw PersistenceError.invalidPersistedState(
+      "Perception snapshot database row must be an object.",
+      { row },
+    );
+  }
+
+  const raw = row as Record<string, unknown>;
+  const candidate = {
+    snapshotId: raw.snapshotId ?? raw.snapshot_id,
+    sessionId: raw.sessionId ?? raw.session_id,
+    cueId: raw.cueId ?? raw.cue_id,
+    evaluationGeneration: Number(
+      raw.evaluationGeneration ?? raw.evaluation_generation,
+    ),
+    summary: raw.summary,
+    structuredFacts: (raw.structuredFacts ??
+      raw.structured_facts ??
+      {}) as Record<string, unknown>,
+    targetSpec: (raw.targetSpec ?? raw.target_spec ?? null) as
+      | Record<string, unknown>
+      | null
+      | undefined,
+    perceivedAt: normalizeDateString(raw.perceivedAt ?? raw.perceived_at),
+    createdAt: normalizeDateString(raw.createdAt ?? raw.created_at),
+  };
+
+  const parsed = authoritativePerceptionSnapshotSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw PersistenceError.invalidPersistedState(
+      `Failed to decode persisted perception snapshot record: ${JSON.stringify(parsed.error.issues)}`,
+      { issues: parsed.error.issues, row },
+    );
+  }
+
+  return parsed.data;
 }

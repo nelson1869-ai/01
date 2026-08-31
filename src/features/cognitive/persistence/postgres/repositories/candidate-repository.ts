@@ -84,6 +84,40 @@ export class CandidateRepository {
     return decodeCandidateActionRow(actionRows[0], evidenceIds);
   }
 
+  async findCandidatesBySessionAndGeneration(
+    executor: DatabaseExecutor,
+    sessionId: string,
+    generation: number,
+  ): Promise<PersistedCandidateAction[]> {
+    const actionRows = await executor
+      .select()
+      .from(candidateActions)
+      .where(
+        and(
+          eq(candidateActions.sessionId, sessionId),
+          eq(candidateActions.evaluationGeneration, generation),
+        ),
+      )
+      .orderBy(asc(candidateActions.createdAt));
+
+    const results: PersistedCandidateAction[] = [];
+    for (const row of actionRows) {
+      const evidenceRows = await executor
+        .select({ evidenceId: candidateEvidence.evidenceId })
+        .from(candidateEvidence)
+        .where(eq(candidateEvidence.candidateId, row.candidateId))
+        .orderBy(asc(candidateEvidence.ordinal));
+
+      results.push(
+        decodeCandidateActionRow(
+          row,
+          evidenceRows.map((e) => e.evidenceId),
+        ),
+      );
+    }
+    return results;
+  }
+
   async findCandidatesByCueId(
     executor: DatabaseExecutor,
     cueId: string,
@@ -125,6 +159,7 @@ export class CandidateRepository {
           candidateId: candidate.candidateId,
           sessionId: candidate.sessionId,
           cueId: candidate.cueId,
+          evaluationGeneration: candidate.evaluationGeneration,
           goal: candidate.goal,
           action: candidate.action,
           confidence: candidate.confidence.toFixed(4),

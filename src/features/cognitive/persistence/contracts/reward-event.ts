@@ -27,19 +27,14 @@ export const persistedRewardEventSchema = z
       "UNSAFE_ACTION",
     ]),
     value: finiteNumberSchema,
+    skillKey: identifierSchema.nullish(),
     reason: summarySchema,
     createdAt: timestampSchema,
   })
-  .refine(
-    (data) => data.value === canonicalRewardValueForSignal(data.signal),
-    {
-      message:
-        "Reward value must match canonical numeric value for its signal.",
-      path: ["value"],
-    },
-  )
+  .refine((data) => data.value === canonicalRewardValueForSignal(data.signal), {
+    message: "Reward value must match canonical numeric value for its signal.",
+    path: ["value"],
+  })
   .readonly();
 
-export type PersistedRewardEvent = z.infer<
-  typeof persistedRewardEventSchema
->;
+export type PersistedRewardEvent = z.infer<typeof persistedRewardEventSchema>;

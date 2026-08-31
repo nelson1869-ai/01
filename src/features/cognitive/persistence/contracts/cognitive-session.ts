@@ -14,6 +14,7 @@ export const persistedCognitiveSessionSchema = z
     currentCandidateId: identifierSchema.nullable(),
     currentPlanId: identifierSchema.nullable(),
     currentExecutionId: identifierSchema.nullable(),
+    evaluationGeneration: nonNegativeSafeIntegerSchema.default(1),
     phase: cognitivePhaseSchema,
     failureCount: nonNegativeSafeIntegerSchema,
     retryCount: nonNegativeSafeIntegerSchema,

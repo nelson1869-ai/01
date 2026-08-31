@@ -21,6 +21,7 @@ export const persistedCandidateActionSchema = z
     scoreValue: confidenceSchema,
     recommendation: identifierSchema,
     scoreFormulaVersion: identifierSchema,
+    evaluationGeneration: z.number().int().positive().default(1),
     evidenceIds: z.array(identifierSchema).max(1_000).readonly(),
     createdAt: timestampSchema,
   })

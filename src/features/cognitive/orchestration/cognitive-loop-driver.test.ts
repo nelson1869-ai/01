@@ -21,7 +21,10 @@ import type {
   PolicyEvaluation,
   PolicyEvaluatorPort,
 } from "./cognitive-ports";
-import type { AssembledCognitiveContext, PerceptionResult } from "./context-assembler";
+import type {
+  AssembledCognitiveContext,
+  PerceptionResult,
+} from "./context-assembler";
 import { DeterministicResultVerifier } from "./testing/deterministic-result-verifier";
 
 const T0 = "2026-08-31T05:00:00.000Z";
@@ -166,6 +169,7 @@ describe("Cognitive Loop Driver unit tests (M6)", () => {
       failureCount: 3,
       retryCount: 3,
       maxRetries: 3,
+      evaluationGeneration: 1,
       cooldownUntil: null,
       rowVersion: 1,
       createdAt: T0,
@@ -228,10 +232,15 @@ describe("Cognitive Loop Driver unit tests (M6)", () => {
       adapter: new FakeAdapter(),
     };
 
-    const result = await advanceCognitiveCycle(fakeDb, session.sessionId, ports, {
-      skillKey: "email.send",
-      now: T0,
-    });
+    const result = await advanceCognitiveCycle(
+      fakeDb,
+      session.sessionId,
+      ports,
+      {
+        skillKey: "email.send",
+        now: T0,
+      },
+    );
 
     expect(result.isBoundary).toBe(true);
     expect(result.cycleResult?.status).toBe("BLOCKED");

@@ -2,7 +2,6 @@ import type { PersistedCognitiveSession } from "../persistence/contracts/cogniti
 import type { PersistedCueIngress } from "../persistence/contracts/cue-ingress";
 import type { MemoryKind } from "../domain/memory";
 import type { PersistedVerifiedMemory } from "../persistence/contracts/verified-memory";
-import { PersistenceError } from "../persistence/postgres/errors/persistence-errors";
 import {
   type PersistedLearningState,
   learningRepository,
@@ -10,29 +9,10 @@ import {
 import type { DatabaseClient } from "../persistence/postgres/transactions/transaction-executor";
 import { retrieveMemoryHeadsBatch } from "./memory-retrieval-orchestrator";
 
-const DISALLOWED_CONTEXT_SECRET_KEYS_PATTERN =
-  /^(authorization|accesstoken|refreshtoken|apikey|password|cookie|privatekey|secret|token|authbrand|runtimeauthorization|chainofthought|scratchpad|hiddenreasoning|modelthoughts|rawmodeltrace)$/i;
+import { assertDataSecurity } from "../security/secret-safety";
 
 export function assertContextSecurity(data: unknown, path: string = ""): void {
-  if (data === null || typeof data !== "object") {
-    return;
-  }
-
-  if (Array.isArray(data)) {
-    for (let i = 0; i < data.length; i++) {
-      assertContextSecurity(data[i], `${path}[${i}]`);
-    }
-    return;
-  }
-
-  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-    if (DISALLOWED_CONTEXT_SECRET_KEYS_PATTERN.test(key)) {
-      throw PersistenceError.invalidPersistedState(
-        `Disallowed property "${key}" (secret, credential, brand, or chain-of-thought) found in cognitive context at ${path || "root"}.`,
-      );
-    }
-    assertContextSecurity(value, path ? `${path}.${key}` : key);
-  }
+  assertDataSecurity(data, path);
 }
 
 export interface PerceptionResult {

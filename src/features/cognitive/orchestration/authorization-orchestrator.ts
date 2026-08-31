@@ -5,6 +5,8 @@ import type { StoredExecutionSafety } from "../persistence/contracts/execution-s
 import type { PersistedGroundingResult } from "../persistence/contracts/persisted-grounding-result";
 import type { PersistedPolicyDecision } from "../persistence/contracts/persisted-policy-decision";
 import { PersistenceError } from "../persistence/postgres/errors/persistence-errors";
+import { candidateRepository } from "../persistence/postgres/repositories/candidate-repository";
+import { sessionRepository } from "../persistence/postgres/repositories/session-repository";
 import { groundingRepository } from "../persistence/postgres/repositories/grounding-repository";
 import { policyRepository } from "../persistence/postgres/repositories/policy-repository";
 import { persistAuthorizationIssuance } from "../persistence/postgres/transactions/persist-authorization-issuance";
@@ -171,6 +173,40 @@ export async function orchestrateAuthorizationIssuance(
     throw PersistenceError.notFound(
       `Policy decision "${command.policyDecisionId}" not found.`,
       { policyDecisionId: command.policyDecisionId },
+    );
+  }
+
+  const candidate = await candidateRepository.findCandidateById(
+    db,
+    command.candidateId,
+  );
+  if (!candidate) {
+    throw PersistenceError.notFound(
+      `Candidate "${command.candidateId}" not found for authorization issuance.`,
+      { candidateId: command.candidateId },
+    );
+  }
+
+  const session = await sessionRepository.findSessionById(
+    db,
+    command.sessionId,
+  );
+  if (!session) {
+    throw PersistenceError.notFound(
+      `Cognitive session "${command.sessionId}" not found for authorization issuance.`,
+      { sessionId: command.sessionId },
+    );
+  }
+
+  if (session.evaluationGeneration !== candidate.evaluationGeneration) {
+    throw PersistenceError.stateConflict(
+      `Generation mismatch: session evaluationGeneration (${session.evaluationGeneration}) does not match candidate evaluationGeneration (${candidate.evaluationGeneration}). Old generation candidates cannot authorize newer session generations.`,
+      {
+        sessionId: command.sessionId,
+        candidateId: command.candidateId,
+        sessionGeneration: session.evaluationGeneration,
+        candidateGeneration: candidate.evaluationGeneration,
+      },
     );
   }
 

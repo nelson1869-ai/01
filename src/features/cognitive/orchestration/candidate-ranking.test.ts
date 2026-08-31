@@ -12,6 +12,7 @@ describe("learning-aware candidate scoring and ranking unit tests", () => {
     candidateId: "cand-1",
     sessionId: "sess-1",
     cueId: "cue-1",
+    evaluationGeneration: 1,
     goal: "Process notification",
     action: "email.send",
     confidence: 0.8,

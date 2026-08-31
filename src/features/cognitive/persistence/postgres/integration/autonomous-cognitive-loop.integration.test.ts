@@ -270,99 +270,165 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     expect(s?.rowVersion).toBe(0);
 
     // 1. CUE -> PERCEIVE
-    let step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    let step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("PERCEIVE");
     expect(step.nextSession.rowVersion).toBe(1);
 
     // 2. PERCEIVE -> BUILD_CONTEXT
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("BUILD_CONTEXT");
     expect(step.nextSession.rowVersion).toBe(2);
 
     // 3. BUILD_CONTEXT -> RETRIEVE_MEMORY
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("RETRIEVE_MEMORY");
     expect(step.nextSession.rowVersion).toBe(3);
 
     // 4. RETRIEVE_MEMORY -> GENERATE_CANDIDATES
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("GENERATE_CANDIDATES");
     expect(step.nextSession.rowVersion).toBe(4);
 
     // 5. GENERATE_CANDIDATES -> SCORE
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("SCORE");
     expect(step.nextSession.rowVersion).toBe(5);
 
     // 6. SCORE -> GROUND_VERIFY
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("GROUND_VERIFY");
     expect(step.nextSession.rowVersion).toBe(6);
 
     // 7. GROUND_VERIFY -> POLICY_SAFETY
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("POLICY_SAFETY");
     expect(step.nextSession.rowVersion).toBe(7);
 
     // 8. POLICY_SAFETY -> PLAN (Mints live runtime capability)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("PLAN");
     expect(step.nextSession.rowVersion).toBe(8);
     expect(step.runtimeAuthorization).toBeDefined();
     const auth = step.runtimeAuthorization;
 
     // 9. PLAN -> DURABLE_EXECUTION (prepare execution)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 }, auth);
+    step = await advanceCognitiveCycle(
+      context.db,
+      sessionId,
+      ports,
+      { skillKey: "email.send", now: T0 },
+      auth,
+    );
     expect(step.nextSession.phase).toBe("DURABLE_EXECUTION");
     expect(step.nextSession.rowVersion).toBe(9);
 
     // 10. DURABLE_EXECUTION -> ACT (reserves operation in Transaction A)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 }, auth);
+    step = await advanceCognitiveCycle(
+      context.db,
+      sessionId,
+      ports,
+      { skillKey: "email.send", now: T0 },
+      auth,
+    );
     expect(step.nextSession.phase).toBe("ACT");
     expect(step.nextSession.rowVersion).toBe(10);
 
     // 11. ACT -> OBSERVE (dispatches adapter outside DB tx, records Transaction B)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 }, auth);
+    step = await advanceCognitiveCycle(
+      context.db,
+      sessionId,
+      ports,
+      { skillKey: "email.send", now: T0 },
+      auth,
+    );
     expect(step.nextSession.phase).toBe("OBSERVE");
     expect(step.nextSession.rowVersion).toBe(11);
     expect(adapter.dispatchCount).toBe(1);
 
     // 12. OBSERVE -> VERIFY_RESULT
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("VERIFY_RESULT");
     expect(step.nextSession.rowVersion).toBe(12);
 
     // 13. VERIFY_RESULT -> REWARD
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("REWARD");
     expect(step.nextSession.rowVersion).toBe(13);
 
     // 14. REWARD -> LEARN (atomic reward applied and learning projected)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("LEARN");
     expect(step.nextSession.rowVersion).toBe(14);
 
     // Verify learning projected
-    const learning = await learningRepository.findLearningState(context.db, "email.send");
+    const learning = await learningRepository.findLearningState(
+      context.db,
+      "email.send",
+    );
     expect(learning).not.toBeNull();
     expect(learning?.sampleCount).toBe(1);
 
     // 15. LEARN -> SAVE_MEMORY (verifies projection, does NOT duplicate reward)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("SAVE_MEMORY");
     expect(step.nextSession.rowVersion).toBe(15);
 
     // Verify learning sampleCount is still 1 (no duplicate reward!)
-    const learningAfter = await learningRepository.findLearningState(context.db, "email.send");
+    const learningAfter = await learningRepository.findLearningState(
+      context.db,
+      "email.send",
+    );
     expect(learningAfter?.sampleCount).toBe(1);
 
     // 16. SAVE_MEMORY -> CLEAR_WORKING_MEMORY (admits memory)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("CLEAR_WORKING_MEMORY");
     expect(step.nextSession.rowVersion).toBe(16);
 
     // 17. CLEAR_WORKING_MEMORY -> IDLE (completes cycle)
-    step = await advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 });
+    step = await advanceCognitiveCycle(context.db, sessionId, ports, {
+      skillKey: "email.send",
+      now: T0,
+    });
     expect(step.nextSession.phase).toBe("IDLE");
     expect(step.nextSession.rowVersion).toBe(17);
     expect(step.isBoundary).toBe(true);
@@ -435,25 +501,43 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     }
 
     const executionId = `exec:${sessionId}:plan-test-1`;
-    const exec = await executionRepository.findExecutionById(context.db, executionId);
+    const exec = await executionRepository.findExecutionById(
+      context.db,
+      executionId,
+    );
     expect(exec).not.toBeNull();
 
-    const op = await executionOperationRepository.findOperationById(context.db, `op:${executionId}:step-1`);
+    const op = await executionOperationRepository.findOperationById(
+      context.db,
+      `op:${executionId}:step-1`,
+    );
     expect(op).not.toBeNull();
 
-    const obs = await observationRepository.findManyObservationsByExecutionId(context.db, executionId);
+    const obs = await observationRepository.findManyObservationsByExecutionId(
+      context.db,
+      executionId,
+    );
     expect(obs).toHaveLength(1);
 
-    const ver = await verificationRepository.findVerificationById(context.db, `ver:${executionId}`);
+    const ver = await verificationRepository.findVerificationById(
+      context.db,
+      `ver:${executionId}`,
+    );
     expect(ver).not.toBeNull();
     expect(ver?.status).toBe("VERIFIED");
 
-    const rew = await rewardRepository.findRewardById(context.db, `rew:ver:${executionId}`);
+    const rew = await rewardRepository.findRewardById(
+      context.db,
+      `rew:ver:${executionId}`,
+    );
     expect(rew).not.toBeNull();
     expect(rew?.signal).toBe("SUCCESS");
     expect(rew?.value).toBe(5);
 
-    const finalSession = await sessionRepository.findSessionById(context.db, sessionId);
+    const finalSession = await sessionRepository.findSessionById(
+      context.db,
+      sessionId,
+    );
     expect(finalSession?.phase).toBe("IDLE");
   });
 
@@ -594,6 +678,7 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
       candidateId,
       sessionId,
       cueId,
+      evaluationGeneration: 1,
       goal: "Action",
       action: "email.send",
       confidence: 0.9,
@@ -693,7 +778,7 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
         sessionId,
         candidateId,
         groundingResultId, // Already consumed!
-        policyDecisionId,  // Already consumed!
+        policyDecisionId, // Already consumed!
         expectedSessionRowVersion: 2,
         expectedSafetyGeneration: 1,
         safetyEventId: "ev-safety-issuance-2",
@@ -765,6 +850,7 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
       candidateId,
       sessionId,
       cueId,
+      evaluationGeneration: 1,
       goal: "Action",
       action: "email.send",
       confidence: 0.9,
@@ -928,19 +1014,31 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     };
 
     // Attempt advance before cooldown deadline -> rejected with COOLDOWN boundary
-    const earlyStep = await advanceCognitiveCycle(context.db, sessionId, ports, {
-      skillKey: "email.send",
-      now: T0, // 0 minutes elapsed
-    });
+    const earlyStep = await advanceCognitiveCycle(
+      context.db,
+      sessionId,
+      ports,
+      {
+        skillKey: "email.send",
+        now: T0, // 0 minutes elapsed
+      },
+    );
     expect(earlyStep.isBoundary).toBe(true);
     expect(earlyStep.cycleResult?.status).toBe("COOLDOWN");
 
     // Advance at cooldown deadline (+5 minutes) -> allowed, resumes to BUILD_CONTEXT via orchestrateRecoverySession
-    const afterCooldown = new Date(new Date(T0).getTime() + 5 * 60 * 1000).toISOString();
-    const readyStep = await advanceCognitiveCycle(context.db, sessionId, ports, {
-      skillKey: "email.send",
-      now: afterCooldown,
-    });
+    const afterCooldown = new Date(
+      new Date(T0).getTime() + 5 * 60 * 1000,
+    ).toISOString();
+    const readyStep = await advanceCognitiveCycle(
+      context.db,
+      sessionId,
+      ports,
+      {
+        skillKey: "email.send",
+        now: afterCooldown,
+      },
+    );
     expect(readyStep.nextSession.phase).toBe("BUILD_CONTEXT");
     expect(readyStep.nextSession.cooldownUntil).toBeNull();
     expect(readyStep.nextSession.cueId).toBe(cueId); // Root cue preserved!
@@ -1036,10 +1134,16 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     expect(result.status).toBe("HUMAN_REVIEW_REQUIRED");
     expect(adapter.dispatchCount).toBe(0);
 
-    const safety = await safetyRepository.findSafetyStateBySessionId(context.db, sessionId);
+    const safety = await safetyRepository.findSafetyStateBySessionId(
+      context.db,
+      sessionId,
+    );
     expect(safety?.status).toBe("UNAUTHORIZED"); // No authorized state was ever minted or persisted!
 
-    const session = await sessionRepository.findSessionById(context.db, sessionId);
+    const session = await sessionRepository.findSessionById(
+      context.db,
+      sessionId,
+    );
     expect(session?.phase).toBe("HUMAN_REVIEW");
   });
 
@@ -1082,7 +1186,10 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     expect(result.status).toBe("NO_ACTION");
     expect(adapter.dispatchCount).toBe(0);
 
-    const session = await sessionRepository.findSessionById(context.db, sessionId);
+    const session = await sessionRepository.findSessionById(
+      context.db,
+      sessionId,
+    );
     expect(session?.phase).toBe("IDLE");
   });
 
@@ -1136,7 +1243,10 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     expect(result.status).toBe("NO_ACTION");
     expect(adapter.dispatchCount).toBe(0);
 
-    const session = await sessionRepository.findSessionById(context.db, sessionId);
+    const session = await sessionRepository.findSessionById(
+      context.db,
+      sessionId,
+    );
     expect(session?.phase).toBe("IDLE");
   });
 
@@ -1190,7 +1300,10 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     expect(result.status).toBe("HUMAN_REVIEW_REQUIRED");
     expect(adapter.dispatchCount).toBe(0);
 
-    const session = await sessionRepository.findSessionById(context.db, sessionId);
+    const session = await sessionRepository.findSessionById(
+      context.db,
+      sessionId,
+    );
     expect(session?.phase).toBe("HUMAN_REVIEW");
   });
 
@@ -1250,7 +1363,10 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     expect(result.status).toBe("HUMAN_REVIEW_REQUIRED");
     expect(adapter.dispatchCount).toBe(0);
 
-    const session = await sessionRepository.findSessionById(context.db, sessionId);
+    const session = await sessionRepository.findSessionById(
+      context.db,
+      sessionId,
+    );
     expect(session?.phase).toBe("HUMAN_REVIEW");
   });
 
@@ -1283,8 +1399,14 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     };
 
     const results = await Promise.allSettled([
-      advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 }),
-      advanceCognitiveCycle(context.db, sessionId, ports, { skillKey: "email.send", now: T0 }),
+      advanceCognitiveCycle(context.db, sessionId, ports, {
+        skillKey: "email.send",
+        now: T0,
+      }),
+      advanceCognitiveCycle(context.db, sessionId, ports, {
+        skillKey: "email.send",
+        now: T0,
+      }),
     ]);
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -1317,18 +1439,21 @@ describe("live PostgreSQL autonomous cognitive loop driver integration tests (M6
     });
 
     // Advance session into HUMAN_REVIEW
-    const humanReviewSession = await sessionRepository.transitionSession(context.db, {
-      sessionId,
-      expectedRowVersion: 0,
-      nextSessionState: {
-        phase: "HUMAN_REVIEW",
-        failureCount: 0,
-        retryCount: 0,
-        maxRetries: 3,
-        cooldownUntil: null,
-        updatedAt: T0,
+    const humanReviewSession = await sessionRepository.transitionSession(
+      context.db,
+      {
+        sessionId,
+        expectedRowVersion: 0,
+        nextSessionState: {
+          phase: "HUMAN_REVIEW",
+          failureCount: 0,
+          retryCount: 0,
+          maxRetries: 3,
+          cooldownUntil: null,
+          updatedAt: T0,
+        },
       },
-    });
+    );
     expect(humanReviewSession.phase).toBe("HUMAN_REVIEW");
 
     await expect(

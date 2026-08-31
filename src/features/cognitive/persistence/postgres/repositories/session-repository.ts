@@ -17,6 +17,7 @@ export interface SessionTransitionParams {
     readonly failureCount: number;
     readonly retryCount: number;
     readonly maxRetries: number;
+    readonly evaluationGeneration?: number;
     readonly cooldownUntil: string | null;
     readonly currentCandidateId?: string | null;
     readonly currentPlanId?: string | null;
@@ -129,6 +130,7 @@ export class SessionRepository {
         failureCount: session.failureCount,
         retryCount: session.retryCount,
         maxRetries: session.maxRetries,
+        evaluationGeneration: session.evaluationGeneration,
         cooldownUntil: session.cooldownUntil,
         currentCandidateId: session.currentCandidateId,
         currentPlanId: session.currentPlanId,
@@ -165,20 +167,27 @@ export class SessionRepository {
       }
     }
 
+    const updateValues: Record<string, unknown> = {
+      phase: params.nextSessionState.phase,
+      failureCount: params.nextSessionState.failureCount,
+      retryCount: params.nextSessionState.retryCount,
+      maxRetries: params.nextSessionState.maxRetries,
+      cooldownUntil: params.nextSessionState.cooldownUntil ?? null,
+      currentCandidateId: params.nextSessionState.currentCandidateId ?? null,
+      currentPlanId: params.nextSessionState.currentPlanId ?? null,
+      currentExecutionId: params.nextSessionState.currentExecutionId ?? null,
+      rowVersion: params.expectedRowVersion + 1,
+      updatedAt: params.nextSessionState.updatedAt,
+    };
+
+    if (params.nextSessionState.evaluationGeneration !== undefined) {
+      updateValues.evaluationGeneration =
+        params.nextSessionState.evaluationGeneration;
+    }
+
     const updatedRows = await executor
       .update(cognitiveSessions)
-      .set({
-        phase: params.nextSessionState.phase,
-        failureCount: params.nextSessionState.failureCount,
-        retryCount: params.nextSessionState.retryCount,
-        maxRetries: params.nextSessionState.maxRetries,
-        cooldownUntil: params.nextSessionState.cooldownUntil ?? null,
-        currentCandidateId: params.nextSessionState.currentCandidateId ?? null,
-        currentPlanId: params.nextSessionState.currentPlanId ?? null,
-        currentExecutionId: params.nextSessionState.currentExecutionId ?? null,
-        rowVersion: params.expectedRowVersion + 1,
-        updatedAt: params.nextSessionState.updatedAt,
-      })
+      .set(updateValues)
       .where(and(...conditions))
       .returning();
 

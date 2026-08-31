@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import { PersistenceError } from "../errors/persistence-errors";
-import { learningState } from "../schema/learning";
+import { learningState, rewardEvents } from "../schema/learning";
 import type { DatabaseExecutor } from "../transactions/transaction-executor";
 
 export interface PersistedLearningState {
@@ -140,21 +140,16 @@ export class LearningRepository {
     skillKey: string,
     now: string = new Date().toISOString(),
   ): Promise<PersistedLearningState> {
-    // Reward events for a given skill can be aggregated or replayed
-    const aggResult = await executor.execute(sql`
-      SELECT
-        COALESCE(SUM(value), 0)::numeric as total_reward,
-        COUNT(*)::bigint as sample_count
-      FROM reward_events
-      WHERE reward_rule_id LIKE ${`%${skillKey}%`} OR reward_rule_id = ${skillKey}
-    `);
+    const rows = await executor
+      .select()
+      .from(rewardEvents)
+      .where(eq(rewardEvents.skillKey, skillKey));
 
-    const rawTotal = Number(
-      (aggResult.rows[0] as { total_reward: string }).total_reward,
-    );
-    const rawCount = Number(
-      (aggResult.rows[0] as { sample_count: string }).sample_count,
-    );
+    let rawTotal = 0;
+    for (const r of rows) {
+      rawTotal += Number(r.value);
+    }
+    const rawCount = rows.length;
     const confidence = calculateLearningConfidence(rawTotal, rawCount);
 
     const upsertedRows = await executor

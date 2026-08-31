@@ -106,6 +106,7 @@ export class RewardRepository {
         rewardIdempotencyKey: reward.rewardIdempotencyKey,
         signal: reward.signal,
         value: reward.value.toFixed(4),
+        skillKey: reward.skillKey,
         reason: reward.reason,
         createdAt: reward.createdAt,
       })

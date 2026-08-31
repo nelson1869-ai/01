@@ -1,12 +1,8 @@
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import {
-  isAllowedExecutionSafetyState,
-} from "../../../domain/execution-safety";
-import {
-  orchestrateAuthorizationIssuance,
-} from "../../../orchestration/authorization-orchestrator";
+import { isAllowedExecutionSafetyState } from "../../../domain/execution-safety";
+import { orchestrateAuthorizationIssuance } from "../../../orchestration/authorization-orchestrator";
 import type { AuthorizationIssuanceCommand } from "../../contracts/authorization-issuance-command";
 import type { PersistedCandidateAction } from "../../contracts/persisted-candidate-action";
 import type { PersistedGroundingResult } from "../../contracts/persisted-grounding-result";
@@ -123,6 +119,7 @@ describe("live PostgreSQL trusted re-authorization pipeline integration tests", 
       candidateId,
       sessionId,
       cueId,
+      evaluationGeneration: 1,
       goal: "Resolve issue",
       action: "Execute action",
       confidence: 0.95,
@@ -403,7 +400,9 @@ describe("live PostgreSQL trusted re-authorization pipeline integration tests", 
     const result = await persistAuthorizationIssuance(context.db, command);
     expect(result.status).toBe("AUTHORIZED");
     if (result.status === "AUTHORIZED") {
-      expect(result.authorization.generation).toBe(result.safetyState.generation);
+      expect(result.authorization.generation).toBe(
+        result.safetyState.generation,
+      );
       expect(result.authorization.generation).toBe(1);
     }
   });

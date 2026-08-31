@@ -20,9 +20,9 @@ export class GitHubGroundingEvaluator implements GroundingEvaluatorPort {
     void context;
 
     // Check if action is in supported GitHub read-only allowlist
-    const isSupportedAction = (SUPPORTED_M7_ACTIONS as readonly string[]).includes(
-      candidate.action,
-    );
+    const isSupportedAction = (
+      SUPPORTED_M7_ACTIONS as readonly string[]
+    ).includes(candidate.action);
 
     if (!isSupportedAction) {
       return {

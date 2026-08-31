@@ -330,10 +330,19 @@ export class AssistantChatService {
       verificationId?: string | null;
     }): Promise<AssistantChatResponseData> => {
       const safeMessage = redactAssistantMessage(input.message).slice(0, 12000);
+      const turnStatus =
+        input.status === "CLARIFICATION_REQUIRED"
+          ? "CLARIFICATION_REQUIRED"
+          : input.status === "DENIED"
+            ? "DENIED"
+            : input.status === "COMPLETED"
+              ? "COMPLETED"
+              : "FAILED";
+
       await this.dependencies.store.completeTurn({
         turnId: turn.turnId,
         kind: input.kind,
-        status: input.status,
+        status: turnStatus,
         assistantMessage: safeMessage,
         decisionSummary: input.decisionSummary,
         cueId: input.cueId,

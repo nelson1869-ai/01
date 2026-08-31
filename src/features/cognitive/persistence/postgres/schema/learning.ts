@@ -35,6 +35,7 @@ export const rewardEvents = pgTable(
     rewardRuleId: varchar("reward_rule_id", { length: 256 }).notNull(),
     signal: varchar("signal", { length: 64 }).notNull(),
     value: numeric("value", { precision: 10, scale: 4 }).notNull(),
+    skillKey: varchar("skill_key", { length: 256 }),
     reason: text("reason").notNull(),
     createdAt: timestamp("created_at", {
       withTimezone: true,
@@ -51,6 +52,7 @@ export const rewardEvents = pgTable(
     ),
     index("reward_events_execution_id_idx").on(table.executionId),
     index("reward_events_verification_id_idx").on(table.verificationId),
+    index("reward_events_skill_key_idx").on(table.skillKey),
     check(
       "reward_events_signal_valid",
       sql`${table.signal} IN ('PERFECT', 'SUCCESS', 'HUMAN_APPROVAL', 'NEUTRAL', 'CORRECTION', 'FAILURE', 'HALLUCINATION', 'UNSAFE_ACTION')`,
