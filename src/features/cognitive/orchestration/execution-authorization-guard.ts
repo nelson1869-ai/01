@@ -104,7 +104,7 @@ export async function loadAndValidateAuthorizedExecutionContext(
   }
 
   if (
-    session.phase !== "DURABLE_EXECUTION" ||
+    (session.phase !== "DURABLE_EXECUTION" && session.phase !== "ACT") ||
     session.currentCandidateId !== authorization.candidateId ||
     session.currentPlanId !== params.planId ||
     session.currentExecutionId !== params.executionId ||

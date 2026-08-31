@@ -48,6 +48,36 @@ export class GroundingRepository {
     return decodeGroundingResultRow(resultRows[0], evidenceIds);
   }
 
+  async findGroundingResultByCandidateId(
+    executor: DatabaseExecutor,
+    candidateId: string,
+  ): Promise<PersistedGroundingResult | null> {
+    const resultRows = await executor
+      .select()
+      .from(groundingResults)
+      .where(eq(groundingResults.candidateId, candidateId))
+      .limit(1);
+
+    if (resultRows.length === 0) {
+      return null;
+    }
+
+    const evidenceRows = await executor
+      .select({ evidenceId: groundingResultEvidence.evidenceId })
+      .from(groundingResultEvidence)
+      .where(
+        eq(
+          groundingResultEvidence.groundingResultId,
+          resultRows[0].groundingResultId,
+        ),
+      )
+      .orderBy(asc(groundingResultEvidence.ordinal));
+
+    const evidenceIds = evidenceRows.map((r) => r.evidenceId);
+
+    return decodeGroundingResultRow(resultRows[0], evidenceIds);
+  }
+
   async findGroundingResultByCandidateAndKey(
     executor: DatabaseExecutor,
     candidateId: string,

@@ -47,6 +47,32 @@ export class PolicyRepository {
     return decodePolicyDecisionRow(rows[0], policyIds);
   }
 
+  async findPolicyDecisionByCandidateId(
+    executor: DatabaseExecutor,
+    candidateId: string,
+  ): Promise<PersistedPolicyDecision | null> {
+    const rows = await executor
+      .select()
+      .from(policyDecisions)
+      .where(eq(policyDecisions.candidateId, candidateId))
+      .limit(1);
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const refRows = await executor
+      .select({ policyId: policyDecisionPolicyRefs.policyId })
+      .from(policyDecisionPolicyRefs)
+      .where(
+        eq(policyDecisionPolicyRefs.policyDecisionId, rows[0].policyDecisionId),
+      );
+
+    const policyIds = refRows.map((r) => r.policyId);
+
+    return decodePolicyDecisionRow(rows[0], policyIds);
+  }
+
   async findPolicyDecisionByCandidateAndKey(
     executor: DatabaseExecutor,
     candidateId: string,

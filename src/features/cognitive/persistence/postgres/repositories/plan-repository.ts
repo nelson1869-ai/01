@@ -59,6 +59,35 @@ export class PlanRepository {
     return decodeActionPlanRow(planRows[0], stepRows, depRows);
   }
 
+  async findPlanByCandidateId(
+    executor: DatabaseExecutor,
+    candidateId: string,
+  ): Promise<PersistedActionPlan | null> {
+    const planRows = await executor
+      .select()
+      .from(actionPlans)
+      .where(eq(actionPlans.candidateId, candidateId))
+      .orderBy(asc(actionPlans.planGeneration))
+      .limit(1);
+
+    if (planRows.length === 0) {
+      return null;
+    }
+
+    const stepRows = await executor
+      .select()
+      .from(actionPlanSteps)
+      .where(eq(actionPlanSteps.planId, planRows[0].planId))
+      .orderBy(asc(actionPlanSteps.ordinal));
+
+    const depRows = await executor
+      .select()
+      .from(actionPlanStepDependencies)
+      .where(eq(actionPlanStepDependencies.planId, planRows[0].planId));
+
+    return decodeActionPlanRow(planRows[0], stepRows, depRows);
+  }
+
   async findPlanByCandidateAndGeneration(
     executor: DatabaseExecutor,
     candidateId: string,

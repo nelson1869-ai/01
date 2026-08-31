@@ -84,6 +84,34 @@ export class CandidateRepository {
     return decodeCandidateActionRow(actionRows[0], evidenceIds);
   }
 
+  async findCandidatesByCueId(
+    executor: DatabaseExecutor,
+    cueId: string,
+  ): Promise<PersistedCandidateAction[]> {
+    const actionRows = await executor
+      .select()
+      .from(candidateActions)
+      .where(eq(candidateActions.cueId, cueId))
+      .orderBy(asc(candidateActions.createdAt));
+
+    const results: PersistedCandidateAction[] = [];
+    for (const row of actionRows) {
+      const evidenceRows = await executor
+        .select({ evidenceId: candidateEvidence.evidenceId })
+        .from(candidateEvidence)
+        .where(eq(candidateEvidence.candidateId, row.candidateId))
+        .orderBy(asc(candidateEvidence.ordinal));
+
+      results.push(
+        decodeCandidateActionRow(
+          row,
+          evidenceRows.map((e) => e.evidenceId),
+        ),
+      );
+    }
+    return results;
+  }
+
   async appendCandidate(
     executor: DatabaseExecutor,
     candidate: PersistedCandidateAction,
